@@ -8,10 +8,11 @@ import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.jetbrains.annotations.NotNull;
 import su.nightexpress.nexshop.ShopPlugin;
-import su.nightexpress.nexshop.api.shop.product.VirtualProduct;
 import su.nightexpress.nexshop.api.shop.type.TradeType;
 import su.nightexpress.nexshop.shop.virtual.VirtualShopModule;
 import su.nightexpress.nexshop.shop.virtual.config.VirtualConfig;
+import su.nightexpress.nexshop.shop.virtual.impl.VirtualProduct;
+import su.nightexpress.nexshop.util.UnitUtils;
 import su.nightexpress.nightcore.config.ConfigValue;
 import su.nightexpress.nightcore.config.FileConfig;
 import su.nightexpress.nightcore.menu.MenuOptions;
@@ -25,6 +26,7 @@ import su.nightexpress.nightcore.menu.link.Linked;
 import su.nightexpress.nightcore.menu.link.ViewLink;
 import su.nightexpress.nightcore.util.ItemReplacer;
 import su.nightexpress.nightcore.util.ItemUtil;
+import su.nightexpress.nightcore.util.Lists;
 import su.nightexpress.nightcore.util.Players;
 
 import java.util.ArrayList;
@@ -63,7 +65,7 @@ public class SellMenu extends ConfigMenu<ShopPlugin> implements Linked<List<Item
             items.clear();
 
             this.module.sellWithReturn(player, inventory);
-            this.plugin.runTask(task -> player.closeInventory());
+            this.runNextTick(player::closeInventory);
         }));
 
         this.load();
@@ -103,17 +105,19 @@ public class SellMenu extends ConfigMenu<ShopPlugin> implements Linked<List<Item
             if (product == null) continue;
 
             ItemStack icon = new ItemStack(item);
-            double price = product.getPriceSell(player) * (item.getAmount() / (double) product.getUnitAmount());
+            double units = UnitUtils.amountToUnits(product, item.getAmount());
+            double price = product.getPriceSell(player) * units;// (item.getAmount() / (double) product.getUnitAmount());
 
             ItemReplacer.create(icon)
-                .trimmed()
                 .setDisplayName(this.itemName)
                 .setLore(this.itemLore)
-                .replaceLoreExact(ITEM_LORE, ItemUtil.getLore(item))
-                .replace(ITEM_NAME, ItemUtil.getItemName(item))
-                .replace(product.getShop().getPlaceholders())
-                .replace(product.getPlaceholders(player))
-                .replace(GENERIC_PRICE, () -> product.getCurrency().format(price))
+                .replacement(replacer -> replacer
+                    .replace(ITEM_LORE, ItemUtil.getSerializedLore(item))
+                    .replace(ITEM_NAME, ItemUtil.getSerializedName(item))
+                    .replace(product.getShop().replacePlaceholders())
+                    .replace(product.replacePlaceholders(player))
+                    .replace(GENERIC_PRICE, () -> product.getCurrency().format(price))
+                )
                 .writeMeta();
 
             inventory.setItem(slot, icon);
@@ -131,7 +135,9 @@ public class SellMenu extends ConfigMenu<ShopPlugin> implements Linked<List<Item
     @Override
     public void onClick(@NotNull MenuViewer viewer, @NotNull ClickResult result, @NotNull InventoryClickEvent event) {
         super.onClick(viewer, result, event);
+
         if (this.simplified) {
+            viewer.setLastClickTime(0L);
             event.setCancelled(false);
             return;
         }
@@ -173,19 +179,19 @@ public class SellMenu extends ConfigMenu<ShopPlugin> implements Linked<List<Item
     @Override
     @NotNull
     protected MenuOptions createDefaultOptions() {
-        return new MenuOptions(BLACK.enclose("Put items to sell"), MenuSize.CHEST_54);
+        return new MenuOptions(BLACK.wrap("Put items to sell"), MenuSize.CHEST_54);
     }
 
     @Override
     protected void loadAdditional() {
-        this.itemName = ConfigValue.create("Item.Name", WHITE.enclose(ITEM_NAME)).read(cfg);
+        this.itemName = ConfigValue.create("Item.Name", WHITE.wrap(ITEM_NAME)).read(cfg);
 
-        this.itemLore = ConfigValue.create("Item.Lore", List.of(
+        this.itemLore = ConfigValue.create("Item.Lore", Lists.newList(
             ITEM_LORE,
             "",
-            LIGHT_GREEN.enclose(BOLD.enclose("Details:")),
-            LIGHT_GREEN.enclose("▪ " + LIGHT_GRAY.enclose("Approx Price: ") + GENERIC_PRICE),
-            LIGHT_GREEN.enclose("▪ " + LIGHT_GRAY.enclose("Found In: ") + SHOP_NAME)
+            LIGHT_GREEN.wrap(BOLD.wrap("Details:")),
+            LIGHT_GREEN.wrap("▪ " + LIGHT_GRAY.wrap("Approx Price: ") + GENERIC_PRICE),
+            LIGHT_GREEN.wrap("▪ " + LIGHT_GRAY.wrap("Found In: ") + SHOP_NAME)
         )).read(cfg);
 
         this.itemSlots = ConfigValue.create("Item.Slots", IntStream.range(0, 45).toArray()).read(cfg);
@@ -198,7 +204,7 @@ public class SellMenu extends ConfigMenu<ShopPlugin> implements Linked<List<Item
 
         ItemStack sellItem = ItemUtil.getSkinHead(SKIN_CHECK_MARK);
         ItemUtil.editMeta(sellItem, meta -> {
-            meta.setDisplayName(LIGHT_GREEN.enclose(BOLD.enclose("SELL ALL!")));
+            meta.setDisplayName(LIGHT_GREEN.wrap(BOLD.wrap("SELL ALL!")));
         });
         list.add(new MenuItem(sellItem).setPriority(10).setSlots(49).setHandler(this.sellHandler));
 

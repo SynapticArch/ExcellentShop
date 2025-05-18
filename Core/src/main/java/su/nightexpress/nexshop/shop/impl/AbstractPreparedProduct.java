@@ -10,7 +10,9 @@ import su.nightexpress.nexshop.api.shop.Transaction;
 import su.nightexpress.nexshop.api.shop.product.PreparedProduct;
 import su.nightexpress.nexshop.api.shop.product.Product;
 import su.nightexpress.nexshop.api.shop.type.TradeType;
-import su.nightexpress.nightcore.util.placeholder.PlaceholderMap;
+import su.nightexpress.nexshop.util.UnitUtils;
+
+import java.util.function.UnaryOperator;
 
 public abstract class AbstractPreparedProduct<P extends Product> implements PreparedProduct {
 
@@ -19,7 +21,6 @@ public abstract class AbstractPreparedProduct<P extends Product> implements Prep
     protected final P              product;
     protected final TradeType      tradeType;
     protected final boolean        all;
-    protected final PlaceholderMap placeholderMap;
 
     private Inventory inventory;
     private int units;
@@ -31,7 +32,6 @@ public abstract class AbstractPreparedProduct<P extends Product> implements Prep
         this.product = product;
         this.tradeType = tradeType;
         this.all = all;
-        this.placeholderMap = Placeholders.forPreparedProduct(this);
 
         this.setInventory(player.getInventory());
         this.setUnits(1);
@@ -40,8 +40,8 @@ public abstract class AbstractPreparedProduct<P extends Product> implements Prep
 
     @Override
     @NotNull
-    public PlaceholderMap getPlaceholders() {
-        return this.placeholderMap;
+    public UnaryOperator<String> replacePlaceholders() {
+        return Placeholders.PREPARED_PRODUCT.replacer(this);
     }
 
     @NotNull
@@ -96,7 +96,7 @@ public abstract class AbstractPreparedProduct<P extends Product> implements Prep
     }
 
     public int getAmount() {
-        return this.getProduct().getUnitAmount() * this.getUnits();
+        return UnitUtils.unitsToAmount(this.product, this.units);// this.getProduct().getUnitAmount() * this.getUnits();
     }
 
     public double getPrice() {

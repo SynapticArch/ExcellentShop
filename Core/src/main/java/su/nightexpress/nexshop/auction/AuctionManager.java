@@ -6,44 +6,50 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import su.nightexpress.economybridge.EconomyBridge;
+import su.nightexpress.economybridge.ItemBridge;
+import su.nightexpress.economybridge.api.Currency;
+import su.nightexpress.economybridge.api.item.ItemHandler;
+import su.nightexpress.nexshop.Placeholders;
 import su.nightexpress.nexshop.ShopPlugin;
-import su.nightexpress.nexshop.api.currency.Currency;
-import su.nightexpress.nexshop.api.shop.packer.PluginItemPacker;
+import su.nightexpress.nexshop.api.shop.event.AuctionListingCreateEvent;
+import su.nightexpress.nexshop.api.shop.product.typing.PhysicalTyping;
 import su.nightexpress.nexshop.auction.command.child.*;
 import su.nightexpress.nexshop.auction.config.AuctionConfig;
 import su.nightexpress.nexshop.auction.config.AuctionLang;
 import su.nightexpress.nexshop.auction.config.AuctionPerms;
-import su.nightexpress.nexshop.auction.data.AuctionDataHandler;
+import su.nightexpress.nexshop.auction.data.AuctionDatabase;
 import su.nightexpress.nexshop.auction.listener.AuctionListener;
 import su.nightexpress.nexshop.auction.listing.ActiveListing;
 import su.nightexpress.nexshop.auction.listing.CompletedListing;
 import su.nightexpress.nexshop.auction.menu.*;
 import su.nightexpress.nexshop.config.Config;
-import su.nightexpress.nexshop.currency.CurrencyManager;
-import su.nightexpress.nexshop.module.AbstractShopModule;
-import su.nightexpress.nexshop.shop.ProductHandlerRegistry;
+import su.nightexpress.nexshop.product.type.ProductTypes;
+import su.nightexpress.nexshop.shop.impl.AbstractModule;
 import su.nightexpress.nightcore.command.experimental.builder.ChainedNodeBuilder;
 import su.nightexpress.nightcore.config.FileConfig;
-import su.nightexpress.nightcore.database.DatabaseType;
+import su.nightexpress.nightcore.db.config.DatabaseType;
 import su.nightexpress.nightcore.language.LangAssets;
 import su.nightexpress.nightcore.menu.MenuViewer;
+import su.nightexpress.nightcore.ui.UIUtils;
+import su.nightexpress.nightcore.ui.menu.confirmation.Confirmation;
 import su.nightexpress.nightcore.util.*;
+import su.nightexpress.nightcore.util.bukkit.NightItem;
 
 import java.util.*;
 import java.util.stream.Collectors;
 
-public class AuctionManager extends AbstractShopModule {
+public class AuctionManager extends AbstractModule {
 
     public static final String ID = "auction";
 
-    private final Listings      listings;
-    private final Set<Currency> allowedCurrencies;
+    private final Listings                     listings;
+    private final Set<Currency>                allowedCurrencies;
     private final Map<String, ListingCategory> categoryMap;
 
-    private AuctionDataHandler dataHandler;
+    private AuctionDatabase database;
 
     private AuctionMenu           mainMenu;
-    private PurchaseConfirmMenu   purchaseConfirmMenu;
     private ExpiredListingsMenu   expiredMenu;
     private SalesHistoryMenu      historyMenu;
     private UnclaimedListingsMenu unclaimedMenu;
@@ -63,7 +69,7 @@ public class AuctionManager extends AbstractShopModule {
 
         this.loadCurrencies();
 
-        if (this.getDefaultCurrency() == CurrencyManager.DUMMY_CURRENCY) {
+        if (this.getDefaultCurrency().isDummy()) {
             this.error("Invalid default currency. Adding items to the auction will be disabled until fixed.");
         }
 
@@ -72,12 +78,11 @@ public class AuctionManager extends AbstractShopModule {
         this.plugin.registerPermissions(AuctionPerms.class);
         this.plugin.getLangManager().loadEntries(AuctionLang.class);
 
-        this.dataHandler = new AuctionDataHandler(this, config);
-        this.dataHandler.setup();
-        this.getDataHandler().onSynchronize();
+        this.database = new AuctionDatabase(this.plugin, this, config);
+        this.database.setup();
+        this.database.onSynchronize();
 
         this.mainMenu = new AuctionMenu(this.plugin, this);
-        this.purchaseConfirmMenu = new PurchaseConfirmMenu(this.plugin, this);
         this.expiredMenu = new ExpiredListingsMenu(this.plugin, this);
         this.historyMenu = new SalesHistoryMenu(this.plugin, this);
         this.unclaimedMenu = new UnclaimedListingsMenu(this.plugin, this);
@@ -85,23 +90,20 @@ public class AuctionManager extends AbstractShopModule {
         this.currencySelectMenu = new CurrencySelectMenu(this.plugin, this);
 
         this.addListener(new AuctionListener(this.plugin, this));
-
-        //AuctionUtils.fillDummy(this);
     }
 
     @Override
     protected void disableModule() {
         if (this.currencySelectMenu != null) this.currencySelectMenu.clear();
-        if (this.purchaseConfirmMenu != null) this.purchaseConfirmMenu.clear();
         if (this.mainMenu != null) this.mainMenu.clear();
         if (this.expiredMenu != null) this.expiredMenu.clear();
         if (this.historyMenu != null) this.historyMenu.clear();
         if (this.sellingMenu != null) this.sellingMenu.clear();
         if (this.unclaimedMenu != null) this.unclaimedMenu.clear();
 
-        if (this.dataHandler != null) {
-            this.dataHandler.shutdown();
-            this.dataHandler = null;
+        if (this.database != null) {
+            this.database.shutdown();
+            this.database = null;
         }
 
         this.listings.clear();
@@ -110,7 +112,7 @@ public class AuctionManager extends AbstractShopModule {
     }
 
     @Override
-    protected void addCommands(@NotNull ChainedNodeBuilder builder) {
+    protected void loadCommands(@NotNull ChainedNodeBuilder builder) {
         builder.fallback(context -> {
             if (!context.checkPermission(AuctionPerms.COMMAND_OPEN)) {
                 context.errorPermission();
@@ -131,11 +133,11 @@ public class AuctionManager extends AbstractShopModule {
     private void loadCurrencies() {
         Set<String> allowedList = AuctionConfig.ALLOWED_CURRENCIES.get();
         if (allowedList.contains(Placeholders.WILDCARD)) {
-            this.allowedCurrencies.addAll(this.plugin.getCurrencyManager().getCurrencies());
+            this.allowedCurrencies.addAll(EconomyBridge.getCurrencies());
         }
         else {
             for (String id : AuctionConfig.ALLOWED_CURRENCIES.get()) {
-                Currency currency = this.plugin.getCurrencyManager().getCurrency(id);
+                Currency currency = EconomyBridge.getCurrency(id);
                 if (currency == null) {
                     this.error("Unknown currency: '" + id + "'. Skipping.");
                     continue;
@@ -145,11 +147,11 @@ public class AuctionManager extends AbstractShopModule {
         }
 
         Currency defaultCurrency = this.getDefaultCurrency();
-        if (defaultCurrency != CurrencyManager.DUMMY_CURRENCY) {
+        if (!defaultCurrency.isDummy()) {
             this.allowedCurrencies.add(defaultCurrency);
         }
 
-        this.info("Allowed currencies: [" + this.allowedCurrencies.stream().map(Currency::getId).collect(Collectors.joining(", ")) + "]");
+        this.info("Allowed currencies: [" + this.allowedCurrencies.stream().map(Currency::getInternalId).collect(Collectors.joining(", ")) + "]");
     }
 
     private void loadCategories() {
@@ -161,8 +163,8 @@ public class AuctionManager extends AbstractShopModule {
     }
 
     @NotNull
-    public AuctionDataHandler getDataHandler() {
-        return dataHandler;
+    public AuctionDatabase getDatabase() {
+        return this.database;
     }
 
     @NotNull
@@ -185,8 +187,7 @@ public class AuctionManager extends AbstractShopModule {
 
     @NotNull
     public Currency getDefaultCurrency() {
-        Currency currency = this.plugin.getCurrencyManager().getCurrency(AuctionConfig.DEFAULT_CURRENCY.get());
-        return currency == null ? CurrencyManager.DUMMY_CURRENCY : currency;
+        return EconomyBridge.getCurrencyOrDummy(AuctionConfig.DEFAULT_CURRENCY.get());
     }
 
     @NotNull
@@ -197,14 +198,10 @@ public class AuctionManager extends AbstractShopModule {
     @NotNull
     public Set<Currency> getAllowedCurrencies(@NotNull Player player) {
         return this.getAllowedCurrencies();
-
-        /*return AuctionConfig.CURRENCIES.values().stream()
-            .filter(setting -> setting.hasPermission(player) || setting.isDefault())
-            .map(CurrencySetting::getCurrency).collect(Collectors.toSet());*/
     }
 
     private boolean needEnsureListingExists() {
-        return this.getDataHandler().getDatabaseType() != DatabaseType.SQLITE;
+        return this.database.getStorageType() != DatabaseType.SQLITE;
     }
 
     public boolean openAuction(@NotNull Player player, int page) {
@@ -259,7 +256,19 @@ public class AuctionManager extends AbstractShopModule {
     }
 
     public void openPurchaseConfirmation(@NotNull Player player, @NotNull ActiveListing listing) {
-        this.purchaseConfirmMenu.open(player, listing);
+        UIUtils.openConfirmation(player, Confirmation.builder()
+            .onAccept((viewer, event) -> {
+                this.buy(player, listing);
+                if (!AuctionConfig.MENU_REOPEN_ON_PURCHASE.get()) {
+                    this.plugin.runTask(task -> player.closeInventory());
+                }
+            })
+            .onReturn((viewer, event) -> {
+                this.plugin.runTask(task -> this.openAuction(viewer.getPlayer()));
+            })
+            .setIcon(NightItem.fromItemStack(listing.getItemStack()).localized(AuctionLang.UI_BUY_CONFIRM).replacement(replacer -> replacer.replace(listing.replacePlaceholders())))
+            .returnOnAccept(AuctionConfig.MENU_REOPEN_ON_PURCHASE.get())
+            .build());
     }
 
     private boolean openAuctionMenu(@NotNull Player player, @NotNull UUID target, @NotNull AbstractAuctionMenu<?> menu, boolean force) {
@@ -276,8 +285,8 @@ public class AuctionManager extends AbstractShopModule {
             return false;
         }
 
-        for (PluginItemPacker packer : ProductHandlerRegistry.getPluginItemPackers()) {
-            String id = packer.getItemId(item);
+        for (ItemHandler handler : ItemBridge.getHandlers()) {
+            String id = handler.getItemId(item);
             if (id != null && bannedItems.contains(id.toLowerCase())) {
                 return false;
             }
@@ -318,7 +327,7 @@ public class AuctionManager extends AbstractShopModule {
     public boolean sell(@NotNull Player player, @NotNull ItemStack item, double price) {
         Set<Currency> currencies = this.getAllowedCurrencies(player);
         if (currencies.isEmpty()) {
-            AuctionLang.ERROR_NO_PERMISSION.getMessage().send(player);
+            AuctionLang.ERROR_NO_PERMISSION.getMessage(this.plugin).send(player);
             return false;
         }
 
@@ -330,9 +339,9 @@ public class AuctionManager extends AbstractShopModule {
         }
 
         if (!this.isAllowedItem(item) || !checkItemModel(item)) {
-            AuctionLang.LISTING_ADD_ERROR_BAD_ITEM.getMessage()
-                .replace(Placeholders.GENERIC_ITEM, ItemUtil.getItemName(item))
-                .send(player);
+            AuctionLang.LISTING_ADD_ERROR_BAD_ITEM.getMessage().send(player, replacer -> replacer
+                .replace(Placeholders.GENERIC_ITEM, ItemUtil.getSerializedName(item))
+            );
             return false;
         }
 
@@ -349,17 +358,17 @@ public class AuctionManager extends AbstractShopModule {
             double matPriceMax = AuctionUtils.getMaterialPriceMax(material);
 
             if (matPriceMin >= 0D && matPriceUnit < matPriceMin) {
-                AuctionLang.LISTING_ADD_ERROR_PRICE_MATERIAL_MIN.getMessage()
+                AuctionLang.LISTING_ADD_ERROR_PRICE_MATERIAL_MIN.getMessage().send(player, replacer -> replacer
                     .replace(Placeholders.GENERIC_ITEM, LangAssets.get(material))
                     .replace(Placeholders.GENERIC_AMOUNT, NumberUtil.format(matPriceMin))
-                    .send(player);
+                );
                 return false;
             }
             if (matPriceMax >= 0D && matPriceUnit > matPriceMax) {
-                AuctionLang.LISTING_ADD_ERROR_PRICE_MATERIAL_MAX.getMessage()
+                AuctionLang.LISTING_ADD_ERROR_PRICE_MATERIAL_MAX.getMessage().send(player, replacer -> replacer
                     .replace(Placeholders.GENERIC_ITEM, LangAssets.get(material))
                     .replace(Placeholders.GENERIC_AMOUNT, NumberUtil.format(matPriceMax))
-                    .send(player);
+                );
                 return false;
             }
         }
@@ -367,7 +376,7 @@ public class AuctionManager extends AbstractShopModule {
         int listingsHas = this.listings.getActive(player).size();
         int listingsMax = this.getListingsMaximum(player);
         if (listingsMax >= 0 && listingsHas >= listingsMax) {
-            AuctionLang.LISTING_ADD_ERROR_LIMIT.getMessage().replace(Placeholders.GENERIC_AMOUNT, listingsMax).send(player);
+            AuctionLang.LISTING_ADD_ERROR_LIMIT.getMessage().send(player, replacer -> replacer.replace(Placeholders.GENERIC_AMOUNT, listingsMax));
             return false;
         }
 
@@ -396,17 +405,17 @@ public class AuctionManager extends AbstractShopModule {
             double curPriceMax = AuctionUtils.getCurrencyPriceMax(currency);
 
             if (curPriceMax > 0 && price > curPriceMax) {
-                AuctionLang.LISTING_ADD_ERROR_PRICE_CURRENCY_MAX.getMessage()
+                AuctionLang.LISTING_ADD_ERROR_PRICE_CURRENCY_MAX.getMessage().send(player, replacer -> replacer
                     .replace(Placeholders.GENERIC_AMOUNT, currency.format(curPriceMax))
                     .replace(currency.replacePlaceholders())
-                    .send(player);
+                );
                 return null;
             }
             if (curPriceMin > 0 && price < curPriceMin) {
-                AuctionLang.LISTING_ADD_ERROR_PRICE_CURRENCY_MIN.getMessage()
+                AuctionLang.LISTING_ADD_ERROR_PRICE_CURRENCY_MIN.getMessage().send(player, replacer -> replacer
                     .replace(Placeholders.GENERIC_AMOUNT, currency.format(curPriceMin))
                     .replace(currency.replacePlaceholders())
-                    .send(player);
+                );
                 return null;
             }
         }
@@ -414,31 +423,44 @@ public class AuctionManager extends AbstractShopModule {
         double taxAmount = AuctionUtils.getSellTax(player);
         double taxPay = AuctionUtils.getTax(currency, price, taxAmount);
         if (taxPay > 0) {
-            double balance = currency.getHandler().getBalance(player);
+            double balance = currency.getBalance(player);
             if (balance < taxPay) {
-                AuctionLang.LISTING_ADD_ERROR_PRICE_TAX.getMessage()
+                AuctionLang.LISTING_ADD_ERROR_PRICE_TAX.getMessage().send(player, replacer -> replacer
                     .replace(Placeholders.GENERIC_TAX, taxAmount)
                     .replace(Placeholders.GENERIC_AMOUNT, currency.format(taxPay))
-                    .send(player);
+                );
                 return null;
             }
-            currency.getHandler().take(player, taxPay);
+            currency.take(player, taxPay);
         }
 
-        ActiveListing listing = ActiveListing.create(player, item, currency, price);
-        this.listings.add(listing);
-        this.plugin.runTaskAsync(task -> this.getDataHandler().addListing(listing));
+        //ItemHandler handler = ProductHandlerRegistry.getHandler(item);
+        //ItemPacker packer = handler.createPacker(item);
+        PhysicalTyping typing = ProductTypes.fromItem(item, false);
 
-        AuctionLang.LISTING_ADD_SUCCESS_INFO.getMessage()
+        if (AuctionConfig.DISABLED_ITEM_HANDLERS.get().contains(typing.getName().toLowerCase())) {
+            typing = ProductTypes.fromItem(item, true);
+        }
+
+        ActiveListing listing = ActiveListing.create(player, typing, currency, price);
+
+        AuctionListingCreateEvent event = new AuctionListingCreateEvent(player, currency, listing);
+        plugin.getPluginManager().callEvent(event);
+        if (event.isCancelled()) return null;
+
+        this.listings.add(listing);
+        this.plugin.runTaskAsync(task -> this.database.addListing(listing));
+
+        AuctionLang.LISTING_ADD_SUCCESS_INFO.getMessage().send(player, replacer -> replacer
             .replace(Placeholders.GENERIC_TAX, currency.format(taxPay))
             .replace(listing.replacePlaceholders())
-            .send(player);
+        );
 
         if (AuctionConfig.LISTINGS_ANNOUNCE.get()) {
-            AuctionLang.LISTING_ADD_SUCCESS_ANNOUNCE.getMessage()
+            AuctionLang.LISTING_ADD_SUCCESS_ANNOUNCE.getMessage().broadcast(replacer -> replacer
                 .replace(Placeholders.forPlayer(player))
                 .replace(listing.replacePlaceholders())
-                .broadcast();
+            );
         }
 
         this.mainMenu.flush();
@@ -447,20 +469,20 @@ public class AuctionManager extends AbstractShopModule {
     }
 
     public boolean buy(@NotNull Player buyer, @NotNull ActiveListing listing) {
-        if (this.needEnsureListingExists() && !this.getDataHandler().isListingExist(listing.getId())) return false;
+        if (this.needEnsureListingExists() && !this.database.isListingExist(listing.getId())) return false;
         if (!this.listings.hasListing(listing.getId())) return false;
 
-        double balance = listing.getCurrency().getHandler().getBalance(buyer);
+        double balance = listing.getCurrency().getBalance(buyer);
         double price = listing.getPrice();
         if (balance < price) {
-            AuctionLang.LISTING_BUY_ERROR_NOT_ENOUGH_FUNDS.getMessage()
+            AuctionLang.LISTING_BUY_ERROR_NOT_ENOUGH_FUNDS.getMessage().send(buyer, replacer -> replacer
                 .replace(Placeholders.GENERIC_BALANCE, listing.getCurrency().format(balance))
                 .replace(listing.replacePlaceholders())
-                .send(buyer);
+            );
             return false;
         }
 
-        listing.getCurrency().getHandler().take(buyer, price);
+        listing.getCurrency().take(buyer, price);
         Players.addItem(buyer, listing.getItemStack());
 
         CompletedListing completedListing = CompletedListing.create(listing, buyer);
@@ -468,22 +490,22 @@ public class AuctionManager extends AbstractShopModule {
         this.listings.remove(listing);
         this.listings.addCompleted(completedListing);
         this.plugin.runTaskAsync(task -> {
-            this.getDataHandler().addCompletedListing(completedListing);
-            this.getDataHandler().deleteListing(listing);
+            this.database.addCompletedListing(completedListing);
+            this.database.deleteListing(listing);
         });
-        AuctionLang.LISTING_BUY_SUCCESS_INFO.getMessage().replace(listing.replacePlaceholders()).send(buyer);
+        AuctionLang.LISTING_BUY_SUCCESS_INFO.getMessage().send(buyer, replacer -> replacer.replace(listing.replacePlaceholders()));
 
         // Notify the seller about the purchase.
         Player seller = plugin.getServer().getPlayer(listing.getOwner());
         if (seller != null) {
             if (AuctionConfig.LISINGS_AUTO_CLAIM.get()) {
-                this.claimRewards(seller, completedListing);
+                this.claimRewards(seller, Lists.newList(completedListing));
             }
             else {
                 int unclaimed = this.listings.getUnclaimed(seller).size();
-                AuctionLang.NOTIFY_UNCLAIMED_LISTINGS.getMessage()
+                AuctionLang.NOTIFY_UNCLAIMED_LISTINGS.getMessage().send(seller, replacer -> replacer
                     .replace(Placeholders.GENERIC_AMOUNT, unclaimed)
-                    .send(seller);
+                );
             }
         }
 
@@ -494,36 +516,30 @@ public class AuctionManager extends AbstractShopModule {
     }
 
     public void takeListing(@NotNull Player player, @NotNull ActiveListing listing) {
-        if (this.needEnsureListingExists() && !this.getDataHandler().isListingExist(listing.getId())) return;
+        if (this.needEnsureListingExists() && !this.database.isListingExist(listing.getId())) return;
         if (!this.listings.hasListing(listing.getId())) return;
 
         Players.addItem(player, listing.getItemStack());
         this.listings.remove(listing);
-        this.plugin.runTaskAsync(task -> this.getDataHandler().deleteListing(listing));
+        this.plugin.runTaskAsync(task -> this.database.deleteListing(listing));
 
         this.mainMenu.flush();
     }
 
     public void claimRewards(@NotNull Player player, @NotNull List<CompletedListing> listings) {
-        this.claimRewards(player, listings.toArray(new CompletedListing[0]));
-    }
-
-    public void claimRewards(@NotNull Player player, @NotNull CompletedListing... listings) {
         for (CompletedListing listing : listings) {
-            if (this.needEnsureListingExists() && this.getDataHandler().isCompletedListingClaimed(listing.getId())) {
+            if (this.needEnsureListingExists() && this.database.isCompletedListingClaimed(listing.getId())) {
                 listing.setClaimed(true);
             }
             if (listing.isClaimed()) continue;
 
-            listing.getCurrency().getHandler().give(player, listing.getPrice());
+            listing.getCurrency().give(player, listing.getPrice());
             listing.setClaimed(true);
 
-            AuctionLang.LISTING_CLAIM_SUCCESS.getMessage()
-                .replace(listing.replacePlaceholders())
-                .send(player);
+            AuctionLang.LISTING_CLAIM_SUCCESS.getMessage().send(player, replacer -> replacer.replace(listing.replacePlaceholders()));
         }
 
-        this.plugin.runTaskAsync(task -> this.getDataHandler().saveCompletedListings(listings));
+        this.plugin.runTaskAsync(task -> this.database.saveCompletedListings(listings));
     }
 
     public boolean canBeUsedHere(@NotNull Player player) {

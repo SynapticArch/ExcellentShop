@@ -1,12 +1,11 @@
 package su.nightexpress.nexshop.shop.chest.config;
 
 import org.bukkit.Material;
-import org.bukkit.Tag;
 import org.bukkit.inventory.ItemStack;
-import su.nightexpress.nexshop.Placeholders;
+import su.nightexpress.economybridge.currency.CurrencyId;
+import su.nightexpress.economybridge.item.ItemPlugins;
 import su.nightexpress.nexshop.api.shop.type.TradeType;
 import su.nightexpress.nexshop.config.Config;
-import su.nightexpress.nexshop.currency.handler.VaultEconomyHandler;
 import su.nightexpress.nexshop.hook.HookId;
 import su.nightexpress.nexshop.shop.chest.ChestUtils;
 import su.nightexpress.nexshop.shop.chest.util.ShopType;
@@ -15,14 +14,31 @@ import su.nightexpress.nightcore.util.*;
 
 import java.util.*;
 
+import static su.nightexpress.nexshop.Placeholders.*;
 import static su.nightexpress.nexshop.api.shop.type.TradeType.BUY;
 import static su.nightexpress.nexshop.api.shop.type.TradeType.SELL;
-import static su.nightexpress.nexshop.shop.virtual.Placeholders.*;
-import static su.nightexpress.nexshop.shop.virtual.Placeholders.GENERIC_SELL;
 import static su.nightexpress.nightcore.util.text.tag.Tags.*;
-import static su.nightexpress.nexshop.shop.chest.Placeholders.*;
 
 public class ChestConfig {
+
+    public static final ConfigValue<Boolean> RENT_ENABLED = ConfigValue.create("Rent.Enabled",
+        true,
+        "Controls whether Shop Rent feature is enabled.");
+
+    public static final ConfigValue<Integer> RENT_MAX_DURATION = ConfigValue.create("Rent.MaxDuration",
+        60,
+        "Sets limit for rent duration value.",
+        "[*] Use -1 for unlimited."
+    );
+
+    public static final ConfigValue<Map<String, Double>> RENT_MAX_PRICE = ConfigValue.forMapById("Rent.MaxPrice",
+        (cfg, path, id) -> cfg.getDouble(path + "." + id),
+        map -> {
+            map.put(CurrencyId.VAULT, 100_00D);
+        },
+        "Sets limit for rent price per currency.",
+        "[*] Use -1 for unlimited."
+    );
 
     public static final ConfigValue<Boolean> DELETE_INVALID_SHOP_CONFIGS = ConfigValue.create("Shops.Delete_Invalid_Shop_Configs",
         false,
@@ -44,10 +60,10 @@ public class ChestConfig {
     );
 
     public static final ConfigValue<String> DEFAULT_CURRENCY = ConfigValue.create("Shops.Default_Currency",
-        VaultEconomyHandler.ID,
+        CurrencyId.VAULT,
         "Sets the default ChestShop currency. It will be used for new products and when no other currencies are available.",
         "As well as for shop creation/deletion price."
-    );
+    ).onRead(CurrencyId::reroute);
 
     public static final ConfigValue<String> DEFAULT_CART_UI = ConfigValue.create("Shops.Default_Cart_UI",
         DEFAULT,
@@ -55,19 +71,30 @@ public class ChestConfig {
         "You can create and edit Cart UIs in " + Config.DIR_CARTS + " directory."
     );
 
-    public static final ConfigValue<Set<String>> ALLOWED_CURRENCIES = ConfigValue.create("Shops.Allowed_Currencies",
-        Set.of(VaultEconomyHandler.ID),
-        "A list of currencies that can be used for Chest Shop products."
+    public static final ConfigValue<Boolean> CHECK_SAFE_LOCATION = ConfigValue.create("Shops.Check_Safe_Location",
+        true,
+        "Controls whether plugin should check shop's location safety before player teleports to it."
     );
+
+    public static final ConfigValue<Boolean> CHECK_CURRENCY_PERMISSIONS = ConfigValue.create("Shops.Check_Currency_Permission",
+        false,
+        "Sets whether or not players must have '" + ChestPerms.PREFIX_CURRENCY + "[name]' permissions to use specific currencies from 'Allowed_Currencies' list."
+    );
+
+    public static final ConfigValue<Set<String>> ALLOWED_CURRENCIES = ConfigValue.create("Shops.Allowed_Currencies",
+        Set.of(CurrencyId.VAULT),
+        "A list of currencies that can be used for Chest Shop products."
+    ).onRead(set -> Lists.modify(set, CurrencyId::reroute));
 
     public static final ConfigValue<Set<Material>> ALLOWED_CONTAINERS = ConfigValue.forSet("Shops.Allowed_Containers",
         BukkitThing::getMaterial,
         (cfg, path, set) -> cfg.set(path, set.stream().map(BukkitThing::toString).toList()),
         () -> {
-            Set<Material> set = new HashSet<>(Tag.SHULKER_BOXES.getValues());
+            Set<Material> set = new HashSet<>(/*Tag.SHULKER_BOXES.getValues()*/);
             set.add(Material.CHEST);
             set.add(Material.TRAPPED_CHEST);
             set.add(Material.BARREL);
+            set.add(Material.SHULKER_BOX);
             return set;
         },
         "A list of Materials, that can be used for shop creation.",
@@ -88,7 +115,7 @@ public class ChestConfig {
         "",
         "Why? Even with 'Auto_Bank' option enabled, players can't sell items to shops with offline owners",
         "unless there are enough funds in the shop bank.",
-        "This setting will fix bypass that.",
+        "This setting will bypass that.",
         "",
         "[*] This feature may damage performance (depends on the currency plugin and its offline player data handling).",
         "[*] This feature is not available for some currencies.");
@@ -98,6 +125,16 @@ public class ChestConfig {
         "Sets whether or not infinite storage system is enabled.",
         "Infinite storage allows you to store as many items in your shops as you want/can,",
         "and don't uses block inventories.");
+
+    public static final ConfigValue<Boolean> SHOP_PRODUCT_BYPASS_DETECTION_ENABLED = ConfigValue.create("Shop.Product.Bypass_Plugin_Detection.Enabled",
+        false,
+        "When enabled, allows players to bypass plugin detection of the item they want to put as a shop product."
+    );
+
+    public static final ConfigValue<Boolean> SHOP_PRODUCT_BYPASS_DETECTION_HOLD_SHIFT = ConfigValue.create("Shop.Product.Bypass_Plugin_Detection.Hold_Shift",
+        false,
+        "When enabled, bypass plugin detection for a shop products will work only when player holds the Shift key (sneaking)."
+    );
 
     public static final ConfigValue<Double> SHOP_PRODUCT_INITIAL_BUY_PRICE = ConfigValue.create("Shops.Product.InitialPrice.Buy",
         10D,
@@ -212,7 +249,7 @@ public class ChestConfig {
         ),
         "List of items that can not be added as shop products.",
         "Vanilla Names: https://minecraft.wiki/w/Java_Edition_data_values -> Blocks / Items -> Resource location column.",
-        "Supported Plugins: " + String.join(", ", HookId.getItemPluginNames())
+        "Supported Plugins: " + String.join(", ", ItemPlugins.values())
     );
 
     public static final ConfigValue<Set<String>> SHOP_PRODUCT_DENIED_LORES = ConfigValue.create("Shops.Products.Lore_Blacklist",
@@ -234,7 +271,7 @@ public class ChestConfig {
             "",
             GENERIC_SELL,
             "",
-            DARK_GRAY.enclose("Hold " + LIGHT_GRAY.enclose("Shift") + " to buy & sell quickly.")
+            DARK_GRAY.wrap("Hold " + LIGHT_GRAY.wrap("Shift") + " to buy & sell quickly.")
         ),
         "Product lore format. Use '" + GENERIC_LORE + "' placeholder to insert original lore of the product item.",
         "You can use 'Chest Product' placeholders: " + URL_WIKI_PLACEHOLDERS
@@ -242,9 +279,9 @@ public class ChestConfig {
 
     public static final ConfigValue<List<String>> PRODUCT_FORMAT_LORE_BUY = ConfigValue.create("Shops.Products.Format.Buy",
         Lists.newList(
-            GREEN.enclose(BOLD.enclose("BUY:")),
-            GREEN.enclose("←" + WHITE.enclose(" Left Click to buy for ") + PRODUCT_PRICE_FORMATTED.apply(BUY)),
-            GREEN.enclose("✔" + WHITE.enclose(" Items Left: ") + PRODUCT_STOCK_AMOUNT_LEFT.apply(BUY))
+            GREEN.wrap(BOLD.wrap("BUY:")),
+            GREEN.wrap("←" + WHITE.wrap(" Left Click to buy for ") + PRODUCT_PRICE_FORMATTED.apply(BUY)),
+            GREEN.wrap("✔" + WHITE.wrap(" Items Left: ") + PRODUCT_STOCK_AMOUNT_LEFT.apply(BUY))
         ),
         "Lore that will appear if product is buyable.",
         "Placeholder: " + GENERIC_BUY
@@ -252,10 +289,10 @@ public class ChestConfig {
 
     public static final ConfigValue<List<String>> PRODUCT_FORMAT_LORE_SELL = ConfigValue.create("Shops.Products.Format.Sell",
         Lists.newList(
-            RED.enclose(BOLD.enclose("SELL:")),
-            RED.enclose("→" + WHITE.enclose(" Right Click to sell for ") + PRODUCT_PRICE_FORMATTED.apply(SELL)),
-            RED.enclose("→" + WHITE.enclose(" Press [F] to sell all for ") + PRODUCT_PRICE_SELL_ALL_FORMATTED),
-            RED.enclose("✔" + WHITE.enclose(" Shop Space: ") + PRODUCT_STOCK_AMOUNT_LEFT.apply(SELL))
+            RED.wrap(BOLD.wrap("SELL:")),
+            RED.wrap("→" + WHITE.wrap(" Right Click to sell for ") + PRODUCT_PRICE_FORMATTED.apply(SELL)),
+            RED.wrap("→" + WHITE.wrap(" Press [F] to sell all for ") + PRODUCT_PRICE_SELL_ALL_FORMATTED),
+            RED.wrap("✔" + WHITE.wrap(" Shop Space: ") + PRODUCT_STOCK_AMOUNT_LEFT.apply(SELL))
         ),
         "Text to appear if product is sellable.",
         "Placeholder: " + GENERIC_SELL
@@ -267,13 +304,13 @@ public class ChestConfig {
         (cfg, path, id) -> cfg.getItem(path + "." + id),
         (cfg, path, map) -> map.forEach((type, item) -> cfg.setItem(path + "." + type, item)),
         () -> Map.of(
-            Placeholders.DEFAULT, new ItemStack(Material.GLASS),
+            DEFAULT, new ItemStack(Material.GLASS),
             BukkitThing.toString(Material.CHEST), new ItemStack(Material.WHITE_STAINED_GLASS)
         ),
         "Sets an item that will be used as default shop showcase.",
         "You can provide different showcases for different shop types you set in 'Allowed_Containers' option.",
-        "Use '" + Placeholders.DEFAULT + "' keyword to set showcase item for all unlisted here container types.",
-        "Available item options including model data: " + Placeholders.WIKI_ITEMS_URL
+        "Use '" + DEFAULT + "' keyword to set showcase item for all unlisted here container types.",
+        "Available item options including model data: " + WIKI_ITEMS_URL
     );
 
     public static final ConfigValue<Boolean> DISPLAY_PLAYER_CUSTOMIZATION_ENABLED = ConfigValue.create("Display.PlayerCustomization.Enabled",
@@ -333,21 +370,11 @@ public class ChestConfig {
         "Sets distance between hologram lines."
     );
 
-    public static final ConfigValue<Map<ShopType, List<String>>> DISPLAY_HOLOGRAM_TEXT_ALL = ConfigValue.forMap("Display.Title.Values",
-        str -> StringUtil.getEnum(str, ShopType.class).orElse(null),
-        (cfg, path, type) -> cfg.getStringList(path + "." + type),
-        (cfg, path, map) -> map.forEach((type, list) -> cfg.set(path + "." + type.name(), list)),
-        Map.of(
-            ShopType.ADMIN, Lists.newList(
-                LIGHT_YELLOW.enclose(BOLD.enclose(SHOP_NAME)),
-                LIGHT_GRAY.enclose(GENERIC_PRODUCT_NAME),
-                GENERIC_BUY + " " + GENERIC_SELL
-            ),
-            ShopType.PLAYER, Lists.newList(
-                LIGHT_YELLOW.enclose(BOLD.enclose(SHOP_NAME)),
-                LIGHT_GRAY.enclose(GENERIC_PRODUCT_NAME),
-                GENERIC_BUY + " " + GENERIC_SELL
-            )
+    public static final ConfigValue<List<String>> DISPLAY_HOLOGRAM_TEXT_ADMIN = ConfigValue.create("Display.Title.Values.ADMIN",
+        Lists.newList(
+            LIGHT_YELLOW.wrap(BOLD.wrap(SHOP_NAME)),
+            LIGHT_GRAY.wrap(GENERIC_PRODUCT_NAME),
+            GENERIC_BUY + " " + GENERIC_SELL
         ),
         "Sets hologram text format for player and admin shops when both options, buying and selling, are available.",
         "You can use 'Chest Shop' placeholders: " + URL_WIKI_PLACEHOLDERS,
@@ -356,13 +383,38 @@ public class ChestConfig {
         Plugins.PLACEHOLDER_API + " is also supported here."
     );
 
+    public static final ConfigValue<List<String>> DISPLAY_HOLOGRAM_TEXT_NORMAL = ConfigValue.create("Display.Title.Values.PLAYER",
+
+        Lists.newList(
+            LIGHT_YELLOW.wrap(BOLD.wrap(SHOP_NAME)),
+            LIGHT_GRAY.wrap(GENERIC_PRODUCT_NAME),
+            GENERIC_BUY + " " + GENERIC_SELL,
+            LIGHT_GRAY.wrap("Stock: " + LIGHT_YELLOW.wrap(GENERIC_PRODUCT_STOCK))
+        ),
+        "Sets hologram text format for player and admin shops when both options, buying and selling, are available.",
+        "You can use 'Chest Shop' placeholders: " + URL_WIKI_PLACEHOLDERS,
+        "Display item name: " + GENERIC_PRODUCT_NAME,
+        "Display item price: " + GENERIC_PRODUCT_PRICE.apply(TradeType.BUY) + ", " + GENERIC_PRODUCT_PRICE.apply(TradeType.SELL),
+        "Display item stock: " + GENERIC_PRODUCT_STOCK,
+        Plugins.PLACEHOLDER_API + " is also supported here."
+    );
+
+    public static final ConfigValue<List<String>> DISPLAY_HOLOGRAM_TEXT_RENT = ConfigValue.create("Display.Title.Rent",
+        Lists.newList(
+            LIGHT_YELLOW.wrap(BOLD.wrap("For Rent")),
+            LIGHT_GRAY.wrap(CHEST_SHOP_RENT_DURATION),
+            LIGHT_GRAY.wrap(CHEST_SHOP_RENT_PRICE)
+        ),
+        "Sets hologram text for rentable shops."
+    );
+
     public static final ConfigValue<Map<ShopType, String>> DISPLAY_HOLOGRAM_TEXT_BUY = ConfigValue.forMap("Display.Title.BuyValue",
         str -> StringUtil.getEnum(str, ShopType.class).orElse(null),
         (cfg, path, type) -> cfg.getString(path + "." + type),
         (cfg, path, map) -> map.forEach((type, list) -> cfg.set(path + "." + type.name(), list)),
         Map.of(
-            ShopType.ADMIN, LIGHT_GRAY.enclose(GREEN.enclose("B: ") + LIGHT_GREEN.enclose(GENERIC_PRODUCT_PRICE.apply(TradeType.BUY))),
-            ShopType.PLAYER, LIGHT_GRAY.enclose(GREEN.enclose("B: ") + LIGHT_GREEN.enclose(GENERIC_PRODUCT_PRICE.apply(TradeType.BUY)))
+            ShopType.ADMIN, LIGHT_GRAY.wrap(GREEN.wrap("B: ") + LIGHT_GREEN.wrap(GENERIC_PRODUCT_PRICE.apply(TradeType.BUY))),
+            ShopType.PLAYER, LIGHT_GRAY.wrap(GREEN.wrap("B: ") + LIGHT_GREEN.wrap(GENERIC_PRODUCT_PRICE.apply(TradeType.BUY)))
         ),
         "Sets hologram text to appear for '" + GENERIC_BUY + "' placeholder when buying option is available for displayed product.",
         "Price placeholder: " + GENERIC_PRODUCT_PRICE.apply(TradeType.BUY),
@@ -374,11 +426,19 @@ public class ChestConfig {
         (cfg, path, type) -> cfg.getString(path + "." + type),
         (cfg, path, map) -> map.forEach((type, list) -> cfg.set(path + "." + type.name(), list)),
         Map.of(
-            ShopType.ADMIN, LIGHT_GRAY.enclose(RED.enclose("S: ") + LIGHT_RED.enclose(GENERIC_PRODUCT_PRICE.apply(TradeType.SELL))),
-            ShopType.PLAYER, LIGHT_GRAY.enclose(RED.enclose("S: ") + LIGHT_RED.enclose(GENERIC_PRODUCT_PRICE.apply(TradeType.SELL)))
+            ShopType.ADMIN, LIGHT_GRAY.wrap(RED.wrap("S: ") + LIGHT_RED.wrap(GENERIC_PRODUCT_PRICE.apply(TradeType.SELL))),
+            ShopType.PLAYER, LIGHT_GRAY.wrap(RED.wrap("S: ") + LIGHT_RED.wrap(GENERIC_PRODUCT_PRICE.apply(TradeType.SELL)))
         ),
         "Sets hologram text to appear for '" + GENERIC_SELL + "' placeholder when selling option is available for displayed product.",
         "Price placeholder: " + GENERIC_PRODUCT_PRICE.apply(TradeType.SELL),
         "All placeholders from 'Title -> Values' option are available here too."
     );
+
+    public static boolean isAutoBankEnabled() {
+        return SHOP_AUTO_BANK.get();
+    }
+
+    public static boolean isRentEnabled() {
+        return RENT_ENABLED.get();
+    }
 }

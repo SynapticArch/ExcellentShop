@@ -2,7 +2,7 @@ package su.nightexpress.nexshop.shop.virtual.impl;
 
 import org.jetbrains.annotations.NotNull;
 import su.nightexpress.nexshop.Placeholders;
-import su.nightexpress.nexshop.shop.util.ShopUtils;
+import su.nightexpress.nexshop.util.ShopUtils;
 import su.nightexpress.nightcore.config.FileConfig;
 import su.nightexpress.nightcore.util.NumberUtil;
 import su.nightexpress.nightcore.util.TimeUtil;
@@ -19,7 +19,7 @@ import java.util.stream.Collectors;
 
 public class VirtualDiscount implements Placeholder {
 
-    private StaticShop     shop;
+    private VirtualShop    shop;
     private Set<DayOfWeek> days;
     private Set<LocalTime> times;
     private double         discount;
@@ -81,14 +81,14 @@ public class VirtualDiscount implements Placeholder {
     }
 
     @NotNull
-    public StaticShop getShop() {
+    public VirtualShop getShop() {
         if (this.shop == null) {
             throw new IllegalStateException("Shop is undefined!");
         }
         return shop;
     }
 
-    public void setShop(@NotNull StaticShop shop) {
+    public void setShop(@NotNull VirtualShop shop) {
         this.shop = shop;
     }
 

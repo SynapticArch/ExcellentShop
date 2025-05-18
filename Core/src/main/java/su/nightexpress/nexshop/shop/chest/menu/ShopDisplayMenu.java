@@ -5,12 +5,11 @@ import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.jetbrains.annotations.NotNull;
 import su.nightexpress.nexshop.ShopPlugin;
+import su.nightexpress.nexshop.api.shop.Shop;
 import su.nightexpress.nexshop.shop.chest.ChestShopModule;
 import su.nightexpress.nexshop.shop.chest.ChestUtils;
-import su.nightexpress.nexshop.shop.chest.Placeholders;
 import su.nightexpress.nexshop.shop.chest.config.ChestLang;
 import su.nightexpress.nexshop.shop.chest.impl.ChestShop;
-import su.nightexpress.nexshop.shop.virtual.menu.ShopEditor;
 import su.nightexpress.nightcore.config.FileConfig;
 import su.nightexpress.nightcore.menu.MenuOptions;
 import su.nightexpress.nightcore.menu.MenuSize;
@@ -26,10 +25,10 @@ import su.nightexpress.nightcore.util.Lists;
 import java.util.ArrayList;
 import java.util.List;
 
-import static su.nightexpress.nexshop.shop.chest.Placeholders.*;
+import static su.nightexpress.nexshop.Placeholders.SKIN_ARROW_DOWN;
 import static su.nightexpress.nightcore.util.text.tag.Tags.*;
 
-public class ShopDisplayMenu extends ShopEditorMenu implements Linked<ChestShop>, ShopEditor {
+public class ShopDisplayMenu extends ShopEditorMenu implements Linked<ChestShop> {
 
     public static final String FILE_NAME = "shop_display.yml";
 
@@ -51,12 +50,16 @@ public class ShopDisplayMenu extends ShopEditorMenu implements Linked<ChestShop>
         this.addHandler(this.hologramToggleHandler = new ItemHandler("hologram_toggle", (viewer, event) -> {
             ChestShop shop = this.getLink(viewer);
             shop.setHologramEnabled(!shop.isHologramEnabled());
+            module.manageDisplay(displayHandler -> displayHandler.remake(shop));
+
             this.saveAndFlush(viewer, shop);
         }));
 
         this.addHandler(this.showcaseToggleHandler = new ItemHandler("showcase_toggle", (viewer, event) -> {
             ChestShop shop = this.getLink(viewer);
             shop.setShowcaseEnabled(!shop.isShowcaseEnabled());
+            module.manageDisplay(displayHandler -> displayHandler.remake(shop));
+
             this.saveAndFlush(viewer, shop);
         }));
 
@@ -86,11 +89,16 @@ public class ShopDisplayMenu extends ShopEditorMenu implements Linked<ChestShop>
 
             menuItem.getOptions().addDisplayModifier((viewer, itemStack) -> {
                 ItemReplacer.create(itemStack).readMeta().trimmed()
-                    .replace(Placeholders.forShopDisplay(this.getLink(viewer)))
+                    .replace(this.getLink(viewer).replacePlaceholders())
                     .replacePlaceholderAPI(viewer.getPlayer())
                     .writeMeta();
             });
         });
+    }
+
+    private void saveAndFlush(@NotNull MenuViewer viewer, @NotNull Shop shop) {
+        shop.saveSettings();
+        this.runNextTick(() -> this.flush(viewer));
     }
 
     @Override
@@ -131,7 +139,7 @@ public class ShopDisplayMenu extends ShopEditorMenu implements Linked<ChestShop>
         ItemUtil.editMeta(holoToggleItem, meta -> {
             meta.setDisplayName(LIGHT_YELLOW.enclose(BOLD.enclose("Toggle Hologram")));
             meta.setLore(Lists.newList(
-                LIGHT_YELLOW.enclose("▪ " + LIGHT_GRAY.enclose("Enabled: ") + SHOP_HOLOGRAM_ENABLED),
+                LIGHT_YELLOW.enclose("▪ " + LIGHT_GRAY.enclose("Enabled: ") + su.nightexpress.nexshop.Placeholders.CHEST_SHOP_HOLOGRAM_ENABLED),
                 "",
                 LIGHT_GRAY.enclose("Enables holographic text above shop."),
                 "",
@@ -145,7 +153,7 @@ public class ShopDisplayMenu extends ShopEditorMenu implements Linked<ChestShop>
         ItemUtil.editMeta(caseToggleItem, meta -> {
             meta.setDisplayName(LIGHT_YELLOW.enclose(BOLD.enclose("Toggle Showcase")));
             meta.setLore(Lists.newList(
-                LIGHT_YELLOW.enclose("▪ " + LIGHT_GRAY.enclose("Enabled: ") + SHOP_SHOWCASE_ENABLED),
+                LIGHT_YELLOW.enclose("▪ " + LIGHT_GRAY.enclose("Enabled: ") + su.nightexpress.nexshop.Placeholders.CHEST_SHOP_SHOWCASE_ENABLED),
                 "",
                 LIGHT_GRAY.enclose("Enables product showcase."),
                 "",

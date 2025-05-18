@@ -6,7 +6,7 @@ import org.bukkit.inventory.ItemStack;
 import org.jetbrains.annotations.NotNull;
 import su.nightexpress.nexshop.shop.chest.ChestShopModule;
 import su.nightexpress.nexshop.shop.chest.ChestUtils;
-import su.nightexpress.nexshop.shop.chest.Placeholders;
+import su.nightexpress.nexshop.Placeholders;
 import su.nightexpress.nexshop.shop.chest.config.ChestConfig;
 import su.nightexpress.nexshop.shop.chest.config.ChestLang;
 import su.nightexpress.nexshop.shop.chest.config.ChestPerms;
@@ -50,7 +50,7 @@ public class GiveItemCommand {
         Players.addItem(player, itemStack);
 
         context.send(ChestLang.COMMAND_GIVE_ITEM_DONE.getMessage()
-            .replace(Placeholders.GENERIC_NAME, ItemUtil.getItemName(itemStack))
+            .replace(Placeholders.GENERIC_NAME, ItemUtil.getSerializedName(itemStack))
             .replace(Placeholders.forPlayer(player))
         );
         return true;

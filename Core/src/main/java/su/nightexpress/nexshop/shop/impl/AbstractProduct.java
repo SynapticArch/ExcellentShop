@@ -1,155 +1,131 @@
 package su.nightexpress.nexshop.shop.impl;
 
 import org.bukkit.entity.Player;
+import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.ItemStack;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import su.nightexpress.nexshop.Placeholders;
+import su.nightexpress.economybridge.api.Currency;
 import su.nightexpress.nexshop.ShopPlugin;
-import su.nightexpress.nexshop.api.currency.Currency;
-import su.nightexpress.nexshop.api.shop.Shop;
-import su.nightexpress.nexshop.api.shop.handler.ProductHandler;
-import su.nightexpress.nexshop.api.shop.packer.ProductPacker;
-import su.nightexpress.nexshop.api.shop.product.PreparedProduct;
 import su.nightexpress.nexshop.api.shop.product.Product;
-import su.nightexpress.nexshop.api.shop.product.VirtualProduct;
-import su.nightexpress.nexshop.api.shop.type.ShopClickAction;
+import su.nightexpress.nexshop.api.shop.product.typing.PhysicalTyping;
+import su.nightexpress.nexshop.api.shop.product.typing.ProductTyping;
+import su.nightexpress.nexshop.api.shop.type.PriceType;
 import su.nightexpress.nexshop.api.shop.type.TradeType;
-import su.nightexpress.nexshop.config.Config;
-import su.nightexpress.nexshop.config.Lang;
-import su.nightexpress.nexshop.shop.chest.impl.ChestShop;
-import su.nightexpress.nexshop.shop.chest.menu.ShopView;
-import su.nightexpress.nexshop.shop.impl.price.FlatPricer;
-import su.nightexpress.nexshop.shop.util.PlaceholderRelMap;
-import su.nightexpress.nexshop.shop.virtual.VirtualShopModule;
-import su.nightexpress.nexshop.shop.virtual.menu.ShopLayout;
-import su.nightexpress.nightcore.language.entry.LangText;
-import su.nightexpress.nightcore.menu.api.Menu;
-import su.nightexpress.nightcore.menu.impl.AbstractMenu;
-import su.nightexpress.nightcore.util.placeholder.PlaceholderMap;
+import su.nightexpress.nexshop.data.product.PriceData;
+import su.nightexpress.nexshop.product.price.AbstractProductPricer;
+import su.nightexpress.nexshop.product.price.impl.DynamicPricer;
+import su.nightexpress.nexshop.product.price.impl.FlatPricer;
+import su.nightexpress.nexshop.product.price.impl.FloatPricer;
+import su.nightexpress.nexshop.util.UnitUtils;
+
+import java.util.function.UnaryOperator;
 
 public abstract class AbstractProduct<S extends AbstractShop<?>> implements Product {
 
     protected final ShopPlugin plugin;
     protected final String     id;
-    protected final PlaceholderRelMap<Player> placeholderRelMap;
 
     protected S                     shop;
+    protected ProductTyping         type;
     protected Currency              currency;
-    protected ProductHandler        handler;
-    protected ProductPacker         packer;
     protected AbstractProductPricer pricer;
 
     public AbstractProduct(@NotNull ShopPlugin plugin,
                            @NotNull String id,
                            @NotNull S shop,
                            @NotNull Currency currency,
-                           @NotNull ProductHandler handler,
-                           @NotNull ProductPacker packer) {
+                           @NotNull ProductTyping type) {
         this.plugin = plugin;
         this.id = id.toLowerCase();
         this.shop = shop;
         this.setCurrency(currency);
         this.setPricer(new FlatPricer());
-        this.setHandler(handler);
-        this.packer = packer;
+        this.setType(type);
+    }
 
-        this.placeholderRelMap = Placeholders.forProduct(this);
+    @NotNull
+    protected abstract UnaryOperator<String> replaceExplicitPlaceholders(@Nullable Player player);
+
+    @Override
+    @NotNull
+    public UnaryOperator<String> replacePlaceholders() {
+        return this.replacePlaceholders(null);
     }
 
     @Override
     @NotNull
-    public PlaceholderMap getPlaceholders(@Nullable Player player) {
-        PlaceholderMap map = this.placeholderRelMap.toNormal(player);
-        map.add(this.getPacker().getPlaceholders()); // Packer can be changed, we can't cache it.
-        map.add(this.getPricer().getPlaceholders()); // Pricer can be changed, we can't cache it.
-        return map;
+    public UnaryOperator<String> replacePlaceholders(@Nullable Player player) {
+        var explicit = this.replaceExplicitPlaceholders(player);
+        var packer = this.type.replacePlaceholders();
+        var pricer = this.pricer.replacePlaceholders();
+
+        return str -> {
+            str = explicit.apply(str);
+            str = packer.apply(str);
+            str = pricer.apply(str);
+            return str;
+        };
     }
 
     @Override
-    public void prepareTrade(@NotNull Player player, @NotNull ShopClickAction click) {
-        Shop shop = this.getShop();
-        TradeType tradeType = click.getTradeType();
-        if (!shop.isTransactionEnabled(tradeType)) {
-            return;
-        }
-
-        if (tradeType == TradeType.BUY) {
-            if (!this.isBuyable()) {
-                Lang.SHOP_PRODUCT_ERROR_UNBUYABLE.getMessage().send(player);
-                return;
-            }
-            if (!Config.GENERAL_BUY_WITH_FULL_INVENTORY.get() && !this.hasSpace(player)) {
-                Lang.SHOP_PRODUCT_ERROR_FULL_INVENTORY.getMessage().send(player);
-                return;
-            }
-        }
-        else if (tradeType == TradeType.SELL) {
-            if (!this.isSellable()) {
-                Lang.SHOP_PRODUCT_ERROR_UNSELLABLE.getMessage().send(player);
-                return;
-            }
-        }
-
-        // For Virtual Shop will return either Stock or Player Limit amount.
-        // For Chest Shop will return inventory space or item amount.
-        int canPurchase = this.getAvailableAmount(player, tradeType);
-        if (canPurchase == 0) {
-            LangText msgStock;
-            if (tradeType == TradeType.BUY) {
-                msgStock = Lang.SHOP_PRODUCT_ERROR_OUT_OF_STOCK;
-            }
-            else {
-                if (shop instanceof ChestShop) {
-                    msgStock = Lang.SHOP_PRODUCT_ERROR_OUT_OF_SPACE;
-                }
-                else msgStock = Lang.SHOP_PRODUCT_ERROR_FULL_STOCK;
-            }
-            msgStock.getMessage().send(player);
-            return;
-        }
-
-        boolean isSellAll = (click == ShopClickAction.SELL_ALL);
-        PreparedProduct prepared = this.getPrepared(player, tradeType, isSellAll);
-        if (click == ShopClickAction.BUY_SINGLE || click == ShopClickAction.SELL_SINGLE || prepared.isAll()) {
-            prepared.trade();
-
-            Menu menu = AbstractMenu.getMenu(player);
-            if (menu instanceof ShopLayout || menu instanceof ShopView) {
-                menu.flush(player);
-            }
-            return;
-        }
-        this.plugin.getShopManager().openProductCart(player, prepared);
+    public boolean isValid() {
+        return this.type.isValid();
     }
 
     @Override
-    public double getPrice(@NotNull TradeType tradeType, @Nullable Player player) {
-        double price = this.getPricer().getPrice(tradeType);
-
-        if (this instanceof VirtualProduct virtualProduct) {
-            if (tradeType == TradeType.BUY && price > 0 && virtualProduct.isDiscountAllowed()) {
-                price *= virtualProduct.getShop().getDiscountModifier();
-            }
-            if (tradeType == TradeType.SELL) {
-                if (player != null) {
-                    double sellModifier = VirtualShopModule.getSellMultiplier(player);
-                    price *= sellModifier;
-                }
-            }
-        }
-        if (!this.getCurrency().decimalsAllowed()) {
-            price = Math.floor(price);
-        }
-
-        return price;
+    public void updatePrice() {
+        this.updatePrice(false);
     }
 
     @Override
-    public void setPrice(@NotNull TradeType tradeType, double price) {
-        if (!this.getCurrency().decimalsAllowed()) {
-            price = Math.floor(price);
+    public void updatePrice(boolean force) {
+        if (this.pricer.getType() == PriceType.FLAT) return;
+        if (this.pricer.getType() == PriceType.PLAYER_AMOUNT) return;
+
+        PriceData priceData = this.plugin.getDataManager().getPriceDataOrCreate(this);
+
+        if (priceData.isExpired() || force) {
+            //plugin.debug("Flush prices for " + this.getId() + " product of " + shop.getId() + " shop.");
+            double buyPrice = priceData.getLatestBuyPrice();
+            double sellPrice = priceData.getLatestSellPrice();
+            long expireDate = priceData.getExpireDate();
+
+            if (this.pricer instanceof FloatPricer floatPricer) {
+                buyPrice = floatPricer.rollPrice(TradeType.BUY);
+                sellPrice = floatPricer.rollPrice(TradeType.SELL);
+                expireDate = floatPricer.getClosestTimestamp();
+            }
+            else if (this.pricer instanceof DynamicPricer dynamicPricer) {
+                double difference = priceData.getPurchases() - priceData.getSales();
+                buyPrice = dynamicPricer.getAdjustedPrice(TradeType.BUY, difference);
+                sellPrice = dynamicPricer.getAdjustedPrice(TradeType.SELL, difference);
+                expireDate = -1L;
+            }
+
+            if (sellPrice > buyPrice && buyPrice >= 0) {
+                sellPrice = buyPrice;
+            }
+
+            priceData.setLatestBuyPrice(buyPrice);
+            priceData.setLatestSellPrice(sellPrice);
+            priceData.setLatestUpdateDate(System.currentTimeMillis());
+            priceData.setExpireDate(expireDate);
+            priceData.setSaveRequired(true);
         }
-        this.getPricer().setPrice(tradeType, price);
+
+        this.setPrice(TradeType.BUY, priceData.getLatestBuyPrice());
+        this.setPrice(TradeType.SELL, priceData.getLatestSellPrice());
+    }
+
+    @Override
+    public double getPriceBuy(@NotNull Player player) {
+        return this.getPrice(TradeType.BUY, player);
+    }
+
+    @Override
+    public double getPriceSell(@NotNull Player player) {
+        return this.getPrice(TradeType.SELL, player);
     }
 
     @Override
@@ -164,28 +140,127 @@ public abstract class AbstractProduct<S extends AbstractShop<?>> implements Prod
     }
 
     @Override
+    public double getPrice(@NotNull TradeType tradeType) {
+        return this.getPrice(tradeType, null);
+    }
+
+    @Override
+    public double getPrice(@NotNull TradeType tradeType, @Nullable Player player) {
+        double price = this.pricer.getPrice(tradeType);
+
+        price = this.applyPriceModifiers(tradeType, price, player);
+
+        return this.currency.fineValue(price);
+    }
+
+    protected abstract double applyPriceModifiers(@NotNull TradeType type, double currentPrice, @Nullable Player player);
+
+    @Override
+    public void setPrice(@NotNull TradeType tradeType, double price) {
+        this.pricer.setPrice(tradeType, this.currency.fineValue(price));
+    }
+
+
+    @Override
+    public boolean isTradeable(@NotNull TradeType tradeType) {
+        return tradeType == TradeType.BUY ? this.isBuyable() : this.isSellable();
+    }
+
+    @Override
     public boolean isBuyable() {
-        AbstractProductPricer pricer = this.getPricer();
-        return pricer.getBuyPrice() >= 0D;
+        return this.shop.isBuyingAllowed() && this.pricer.getBuyPrice() >= 0D;
     }
 
     @Override
     public boolean isSellable() {
-        AbstractProductPricer pricer = this.getPricer();
-        double priceSell = pricer.getSellPrice();
-        if (priceSell < 0D) {
+        if (!(this.type instanceof PhysicalTyping)) return false;
+        if (!this.shop.isSellingAllowed()) return false;
+
+        double sellPrice = this.pricer.getSellPrice();
+        if (sellPrice < 0D) {
             return false;
         }
 
-        // Check if this product is buyable, so we can check if sell price is over the buy price
-        // to prevent money duplication.
-        // If this product can not be purchased, these checks are useless.
-        if (this.getShop().isTransactionEnabled(TradeType.BUY) && this.isBuyable()) {
-            return priceSell <= pricer.getBuyPrice();
+        // Don't allow to sell items with sell price greater than buy one.
+        if (this.isBuyable()) {
+            return sellPrice <= this.pricer.getBuyPrice();
         }
 
         return true;
     }
+
+
+    @Override
+    public int getUnitAmount() {
+        return this.type.getUnitAmount();
+    }
+
+    @Override
+    public void delivery(@NotNull Player player, int count) {
+        this.delivery(player.getInventory(), count);
+    }
+
+    @Override
+    public void delivery(@NotNull Inventory inventory, int count) {
+        this.type.delivery(inventory, count);
+    }
+
+    @Override
+    public void take(@NotNull Player player, int count) {
+        this.take(player.getInventory(), count);
+    }
+
+    @Override
+    public void take(@NotNull Inventory inventory, int count) {
+        this.type.take(inventory, count);
+    }
+
+    @Override
+    public int count(@NotNull Player player) {
+        return this.count(player.getInventory());
+    }
+
+    @Override
+    public int countUnits(@NotNull Player player) {
+        return this.countUnits(player.getInventory());
+    }
+
+    @Override
+    public int countUnits(@NotNull Inventory inventory) {
+        return this.countUnits(this.count(inventory));// / this.getUnitAmount();
+    }
+
+    @Override
+    public int countUnits(int amount) {
+        return UnitUtils.amountToUnits(this, amount);
+        //return amount / this.getUnitAmount();
+    }
+
+    @Override
+    public int count(@NotNull Inventory inventory) {
+        return this.type.count(inventory);
+    }
+
+    @Override
+    public int countSpace(@NotNull Player player) {
+        return this.countSpace(player.getInventory());
+    }
+
+    @Override
+    public int countSpace(@NotNull Inventory inventory) {
+        return this.type.countSpace(inventory);
+    }
+
+    @Override
+    public boolean hasSpace(@NotNull Player player) {
+        return this.hasSpace(player.getInventory());
+    }
+
+    @Override
+    public boolean hasSpace(@NotNull Inventory inventory) {
+        return this.type.hasSpace(inventory);
+    }
+
 
 
     @Override
@@ -202,20 +277,19 @@ public abstract class AbstractProduct<S extends AbstractShop<?>> implements Prod
 
     @NotNull
     @Override
-    public ProductHandler getHandler() {
-        return handler;
+    public ProductTyping getType() {
+        return this.type;
     }
 
     @Override
-    public void setHandler(@NotNull ProductHandler handler) {
-        this.handler = handler;
-        this.packer = handler.createPacker();
+    public void setType(@NotNull ProductTyping type) {
+        this.type = type;
     }
 
+    @Override
     @NotNull
-    @Override
-    public ProductPacker getPacker() {
-        return packer;
+    public ItemStack getPreview() {
+        return this.type.getPreview();
     }
 
     @Override

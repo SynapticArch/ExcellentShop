@@ -5,105 +5,93 @@ import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import su.nightexpress.nexshop.api.currency.Currency;
+import su.nightexpress.economybridge.api.Currency;
 import su.nightexpress.nexshop.api.shop.Shop;
-import su.nightexpress.nexshop.api.shop.handler.ProductHandler;
-import su.nightexpress.nexshop.api.shop.packer.ProductPacker;
-import su.nightexpress.nexshop.api.shop.type.ShopClickAction;
+import su.nightexpress.nexshop.api.shop.product.typing.ProductTyping;
 import su.nightexpress.nexshop.api.shop.type.TradeType;
-import su.nightexpress.nexshop.shop.impl.AbstractProductPricer;
-import su.nightexpress.nightcore.util.placeholder.Placeholder;
-import su.nightexpress.nightcore.util.placeholder.PlaceholderMap;
+import su.nightexpress.nexshop.product.price.AbstractProductPricer;
 
-public interface Product extends Placeholder {
+import java.util.UUID;
+import java.util.function.UnaryOperator;
 
-    @Override
-    @NotNull
-    default PlaceholderMap getPlaceholders() {
-        return this.getPlaceholders(null);
-    }
+public interface Product {
 
-    @NotNull PlaceholderMap getPlaceholders(@Nullable Player player);
+    @NotNull UnaryOperator<String> replacePlaceholders();
 
-    void prepareTrade(@NotNull Player player, @NotNull ShopClickAction click);
+    @NotNull UnaryOperator<String> replacePlaceholders(@Nullable Player player);
 
-    default double getPrice(@NotNull TradeType tradeType) {
-        return this.getPrice(tradeType, null);
-    }
+    boolean isValid();
+
+    /**
+     * Performs a check to determine if product is available for buying/selling (e.g. present in the shop, is in rotation).
+     * @param player Player who about to buy/sell product.
+     * @return Whether product is available for buying/selling.
+     */
+    boolean isAvailable(@NotNull Player player);
+
+    int getAvailableAmount(@NotNull Player player, @NotNull TradeType tradeType);
+
+
+    int countStock(@NotNull TradeType type, @Nullable UUID playerId);
+
+    boolean consumeStock(@NotNull TradeType type, int amount, @Nullable UUID playerId);
+
+    boolean storeStock(@NotNull TradeType type, int amount, @Nullable UUID playerId);
+
+    boolean restock(@NotNull TradeType type, boolean force, @Nullable UUID playerId);
+
+    long getRestockDate(@Nullable UUID playerId);
+
+
+    void updatePrice();
+
+    void updatePrice(boolean force);
+
+    double getPriceBuy(@NotNull Player player);
+
+    double getPriceSell(@NotNull Player player);
+
+    double getPriceSellAll(@NotNull Player player);
+
+    double getPrice(@NotNull TradeType tradeType);
 
     double getPrice(@NotNull TradeType tradeType, @Nullable Player player);
 
     void setPrice(@NotNull TradeType tradeType, double price);
 
-    default double getPriceBuy(@NotNull Player player) {
-        return this.getPrice(TradeType.BUY, player);
-    }
+    int getUnitAmount();
 
-    default double getPriceSell(@NotNull Player player) {
-        return this.getPrice(TradeType.SELL, player);
-    }
+    void delivery(@NotNull Player player, int count);
 
-    double getPriceSellAll(@NotNull Player player);
+    void delivery(@NotNull Inventory inventory, int count);
 
-    default int getUnitAmount() {
-        return this.getPacker().getUnitAmount();
-    }
+    void take(@NotNull Player player, int count);
 
-    default void delivery(@NotNull Player player, int count) {
-        this.delivery(player.getInventory(), count);
-    }
+    void take(@NotNull Inventory inventory, int count);
 
-    default void delivery(@NotNull Inventory inventory, int count) {
-        this.getPacker().delivery(inventory, count);
-    }
+    int count(@NotNull Player player);
 
-    default void take(@NotNull Player player, int count) {
-        this.take(player.getInventory(), count);
-    }
+    int countUnits(@NotNull Player player);
 
-    default void take(@NotNull Inventory inventory, int count) {
-        this.getPacker().take(inventory, count);
-    }
+    int countUnits(@NotNull Inventory inventory);
 
-    default int count(@NotNull Player player) {
-        return this.count(player.getInventory());
-    }
+    int countUnits(int amount);
 
-    default int countUnits(@NotNull Player player) {
-        return this.countUnits(player.getInventory());
-    }
+    int count(@NotNull Inventory inventory);
 
-    default int countUnits(@NotNull Inventory inventory) {
-        return this.count(inventory) / this.getUnitAmount();
-    }
+    int countSpace(@NotNull Player player);
 
-    default int count(@NotNull Inventory inventory) {
-        return this.getPacker().count(inventory);
-    }
+    int countSpace(@NotNull Inventory inventory);
 
-    default int countSpace(@NotNull Player player) {
-        return this.countSpace(player.getInventory());
-    }
+    boolean hasSpace(@NotNull Player player);
 
-    default int countSpace(@NotNull Inventory inventory) {
-        return this.getPacker().countSpace(inventory);
-    }
-
-    default boolean hasSpace(@NotNull Player player) {
-        return this.hasSpace(player.getInventory());
-    }
-
-    default boolean hasSpace(@NotNull Inventory inventory) {
-        return this.getPacker().hasSpace(inventory);
-    }
+    boolean hasSpace(@NotNull Inventory inventory);
 
     @NotNull PreparedProduct getPrepared(@NotNull Player player, @NotNull TradeType buyType, boolean all);
 
-    int getAvailableAmount(@NotNull Player player, @NotNull TradeType tradeType);
 
-    default boolean isTradeable(@NotNull TradeType tradeType) {
-        return tradeType == TradeType.BUY ? this.isBuyable() : this.isSellable();
-    }
+
+    boolean isTradeable(@NotNull TradeType tradeType);
 
     boolean isBuyable();
 
@@ -113,21 +101,17 @@ public interface Product extends Placeholder {
 
     @NotNull Shop getShop();
 
+    @NotNull ProductTyping getType();
+
+    void setType(@NotNull ProductTyping type);
+
+    @NotNull ItemStack getPreview();
+
     @NotNull Currency getCurrency();
 
     void setCurrency(@NotNull Currency currency);
 
-    @NotNull ProductHandler getHandler();
-
-    void setHandler(@NotNull ProductHandler handler);
-
-    @NotNull ProductPacker getPacker();
-
     @NotNull AbstractProductPricer getPricer();
 
     void setPricer(@NotNull AbstractProductPricer pricer);
-
-    @NotNull default ItemStack getPreview() {
-        return this.getPacker().getPreview();
-    }
 }

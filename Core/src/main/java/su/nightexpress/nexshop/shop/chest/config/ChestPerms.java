@@ -10,15 +10,15 @@ public class ChestPerms {
     public static final String PREFIX_COMMAND       = PREFIX + "command.";
     public static final String PREFIX_BYPASS        = PREFIX + "bypass.";
     public static final String PREFIX_PRICE_TYPE    = PREFIX + "price.";
-    public static final String PREFIX_SHOP_TYPE     = PREFIX + "type.";
     public static final String PREFIX_PRODUCT_LIMIT = PREFIX + "products.amount.";
     public static final String PREFIX_SHOP_LIMIT    = PREFIX + "shops.amount.";
+    public static final String PREFIX_CURRENCY      = PREFIX + "currency.";
 
     public static final UniPermission MODULE     = new UniPermission(PREFIX + Placeholders.WILDCARD);
     public static final UniPermission COMMAND    = new UniPermission(PREFIX_COMMAND + Placeholders.WILDCARD);
     public static final UniPermission BYPASS     = new UniPermission(PREFIX_BYPASS + Placeholders.WILDCARD);
-    public static final UniPermission SHOP_TYPE  = new UniPermission(PREFIX_SHOP_TYPE + Placeholders.WILDCARD);
     public static final UniPermission PRICE_TYPE = new UniPermission(PREFIX_PRICE_TYPE + Placeholders.WILDCARD);
+    public static final UniPermission ADMIN_SHOP = new UniPermission(PREFIX + "type.admin");
 
     public static final UniPermission DISPLAY_CUSTOMIZATION = new UniPermission(PREFIX + "display.customization");
     public static final UniPermission TELEPORT              = new UniPermission(PREFIX + "teleport");
@@ -43,7 +43,6 @@ public class ChestPerms {
         MODULE.addChildren(
             COMMAND,
             BYPASS,
-            SHOP_TYPE,
             PRICE_TYPE,
             CREATE,
             DISPLAY_CUSTOMIZATION,

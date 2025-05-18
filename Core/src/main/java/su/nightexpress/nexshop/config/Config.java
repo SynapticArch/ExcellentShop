@@ -3,6 +3,7 @@ package su.nightexpress.nexshop.config;
 import org.bukkit.event.inventory.ClickType;
 import org.jetbrains.annotations.NotNull;
 import su.nightexpress.nexshop.api.shop.type.ShopClickAction;
+import su.nightexpress.nexshop.util.ShopUtils;
 import su.nightexpress.nightcore.config.ConfigValue;
 import su.nightexpress.nightcore.util.Lists;
 import su.nightexpress.nightcore.util.StringUtil;
@@ -16,7 +17,8 @@ public class Config {
     public static final String DIR_CARTS = "/menu/product_carts/";
 
     public static final ConfigValue<String> DATE_FORMAT = ConfigValue.create("General.DateFormat",
-        "MM/dd/yyyy HH:mm");
+        "MM/dd/yyyy HH:mm"
+    ).whenRead(ShopUtils::setDateFormatter);
 
     public static final ConfigValue<Integer> SHOP_UPDATE_INTERVAL = ConfigValue.create("General.Shop_Update_Interval",
         60,
@@ -30,16 +32,19 @@ public class Config {
 
     public static final ConfigValue<Boolean> MODULES_VIRTUAL_SHOP_ENABLED = ConfigValue.create("Modules.VirtualShop.Enabled",
         true,
-        "Sets whether or not Virtual Shop module is enabled.");
+        "Sets whether or not Virtual Shop module is enabled."
+    );
 
     public static final ConfigValue<String[]> MODULES_VIRTUAL_SHOP_ALIASES = ConfigValue.create("Modules.VirtualShop.Command_Aliases",
         new String[]{"vshop"},
         "Command aliases (names) for the Virtual Shop module. Split with commas.",
-        "[*] You must reboot the server to apply changes.");
+        "[*] You must reboot the server to apply changes."
+    );
 
     public static final ConfigValue<Boolean> MODULES_CHEST_SHOP_ENABLED = ConfigValue.create("Modules.ChestShop.Enabled",
         true,
-        "Sets whether or not Chest Shop module is enabled.");
+        "Sets whether or not Chest Shop module is enabled."
+    );
 
     public static final ConfigValue<String[]> MODULES_CHEST_SHOP_ALIASES = ConfigValue.create("Modules.ChestShop.Command_Aliases",
         new String[]{"chestshop", "cshop", "cs"},
@@ -49,22 +54,53 @@ public class Config {
 
     public static final ConfigValue<Boolean> MODULES_AUCTION_ENABLED = ConfigValue.create("Modules.Auction.Enabled",
         true,
-        "Sets whether or not Auction module is enabled.");
+        "Sets whether or not Auction module is enabled."
+    );
 
     public static final ConfigValue<String[]> MODULES_AUCTION_ALIASES = ConfigValue.create("Modules.Auction.Command_Aliases",
         new String[]{"auction", "auc", "ah"},
         "Command aliases (names) for the Auction module. Split with commas.",
-        "[*] You must reboot the server to apply changes.");
+        "[*] You must reboot the server to apply changes."
+    );
+
+    public static final ConfigValue<Integer> DATA_SAVE_INTERVAL = ConfigValue.create("Data.SaveInterval",
+        5,
+        "Sets how often (in seconds) modified product & shop datas will be saved to the database.",
+        "Data including:",
+        "- Product's price data (float, dynamic).",
+        "- Product's stock data (global, player).",
+        "- Shop's rotation data.",
+        "[*] Data is also saved on server reboot and plugin reload.",
+        "[*] You can disable it if you're on SQLite or don't care about syncing across multiple servers."
+    );
+
+    public static final ConfigValue<String> DATA_PRICE_TABLE = ConfigValue.create("Data.PriceTable",
+        "price_data"
+    );
+
+    public static final ConfigValue<String> DATA_STOCKS_TABLE = ConfigValue.create("Data.StocksTable",
+        "stocks"
+    );
+
+    public static final ConfigValue<String> DATA_ROTATIONS_TABLE = ConfigValue.create("Data.RotationsTable",
+        "rotations"
+    );
 
     public static final ConfigValue<Boolean> GENERAL_BUY_WITH_FULL_INVENTORY = ConfigValue.create("General.Buy_With_Full_Inventory",
-        false, "Sets wheter players can purchase items from shop with full inventory.");
+        false,
+        "Sets wheter players can purchase items from shop with full inventory."
+    );
 
     public static final ConfigValue<Boolean> GENERAL_CLOSE_GUI_AFTER_TRADE = ConfigValue.create("General.Close_GUI_After_Trade",
-        false, "Sets whether or not Shop GUI should be closed when you sold/bought items.");
+        false,
+        "Sets whether or not Shop GUI should be closed when you sold/bought items."
+    );
 
+    @Deprecated
     public static final ConfigValue<Boolean> GUI_PLACEHOLDER_API = ConfigValue.create("GUI.Use_PlaceholderAPI",
         false,
-        "Sets whether PlaceholderAPI placeholders will be applied to non-product items in Shop GUIs.");
+        "[Outdated. There is dedicated PlaceholderAPI setting in GUI files]"
+    );
 
     public static final ConfigValue<Map<ClickType, ShopClickAction>> GUI_CLICK_ACTIONS = ConfigValue.create(
         "GUI.Click_Types",

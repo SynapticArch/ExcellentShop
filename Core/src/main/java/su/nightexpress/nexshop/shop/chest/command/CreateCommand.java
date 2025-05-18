@@ -7,7 +7,6 @@ import su.nightexpress.nexshop.shop.chest.ChestShopModule;
 import su.nightexpress.nexshop.shop.chest.config.ChestConfig;
 import su.nightexpress.nexshop.shop.chest.config.ChestLang;
 import su.nightexpress.nexshop.shop.chest.config.ChestPerms;
-import su.nightexpress.nexshop.shop.chest.util.ShopType;
 import su.nightexpress.nightcore.command.experimental.CommandContext;
 import su.nightexpress.nightcore.command.experimental.argument.ArgumentTypes;
 import su.nightexpress.nightcore.command.experimental.argument.ParsedArguments;
@@ -24,11 +23,11 @@ public class CreateCommand {
             .permission(ChestPerms.CREATE)
             .description(ChestLang.COMMAND_CREATE_DESC)
             .playerOnly()
-            .withArgument(ArgumentTypes.decimalAbs(ARG_BUY_PRICE)
+            .withArgument(ArgumentTypes.decimalCompactAbs(ARG_BUY_PRICE)
                 .localized(ChestLang.COMMAND_ARGUMENT_NAME_BUY_PRICE)
                 .withSamples(tabContext -> Lists.newList("100", "1000"))
             )
-            .withArgument(ArgumentTypes.decimalAbs(ARG_SELL_PRICE)
+            .withArgument(ArgumentTypes.decimalCompactAbs(ARG_SELL_PRICE)
                 .localized(ChestLang.COMMAND_ARGUMENT_NAME_SELL_PRICE)
                 .withSamples(tabContext -> Lists.newList("50", "500"))
             )
@@ -45,6 +44,6 @@ public class CreateCommand {
         double buyPrice = arguments.getDoubleArgument(ARG_BUY_PRICE, ChestConfig.SHOP_PRODUCT_INITIAL_BUY_PRICE.get());
         double sellPrice = arguments.getDoubleArgument(ARG_SELL_PRICE, ChestConfig.SHOP_PRODUCT_INITIAL_SELL_PRICE.get());
 
-        return module.createShopNaturally(player, block, ShopType.PLAYER, buyPrice, sellPrice);
+        return module.createShopNaturally(player, block, buyPrice, sellPrice);
     }
 }

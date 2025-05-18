@@ -6,9 +6,7 @@ import org.jetbrains.annotations.NotNull;
 import su.nightexpress.nexshop.ShopPlugin;
 import su.nightexpress.nexshop.api.shop.Transaction;
 import su.nightexpress.nexshop.api.shop.Transaction.Result;
-import su.nightexpress.nexshop.api.shop.VirtualShop;
 import su.nightexpress.nexshop.api.shop.event.ShopTransactionEvent;
-import su.nightexpress.nexshop.api.shop.product.VirtualProduct;
 import su.nightexpress.nexshop.api.shop.type.TradeType;
 import su.nightexpress.nexshop.shop.impl.AbstractPreparedProduct;
 import su.nightexpress.nexshop.shop.virtual.config.VirtualLang;
@@ -27,7 +25,7 @@ public class VirtualPreparedProduct extends AbstractPreparedProduct<VirtualProdu
         VirtualShop shop = product.getShop();
 
         double price = this.getPrice();
-        double balance = product.getCurrency().getHandler().getBalance(player);
+        double balance = product.getCurrency().getBalance(player);
 
         Result result = Transaction.Result.SUCCESS;
         if (balance < price) {
@@ -47,12 +45,9 @@ public class VirtualPreparedProduct extends AbstractPreparedProduct<VirtualProdu
                 VirtualLang.PRODUCT_PURCHASE_BUY.getMessage().replace(this.replacePlaceholders()).send(player);
             }
 
-            shop.getPricer().onTransaction(event);
-            shop.getStock().onTransaction(event);
-
-            // Process transaction
+            shop.onTransaction(event);
             product.delivery(this.getInventory(), transaction.getUnits());
-            product.getCurrency().getHandler().take(player, transaction.getPrice());
+            product.getCurrency().take(player, transaction.getPrice());
             shop.getModule().getLogger().logTransaction(event);
         }
         return transaction;
@@ -66,7 +61,7 @@ public class VirtualPreparedProduct extends AbstractPreparedProduct<VirtualProdu
         VirtualProduct product = this.getProduct();
         VirtualShop shop = product.getShop();
 
-        int possible = product.getAvailableAmount(player, this.getTradeType());//.getShop().getStock().count(player, product, this.getTradeType());
+        int possible = product.getAvailableAmount(player, TradeType.SELL);//.getShop().getStock().count(player, product, this.getTradeType());
         int userHas = product.countUnits(inventory);
         int fined;
         if (this.isAll()) {
@@ -100,11 +95,11 @@ public class VirtualPreparedProduct extends AbstractPreparedProduct<VirtualProdu
                 VirtualLang.PRODUCT_PURCHASE_SELL.getMessage().replace(this.replacePlaceholders()).send(player);
             }
 
-            shop.getPricer().onTransaction(event);
-            shop.getStock().onTransaction(event);
+            shop.onTransaction(event);
+            //shop.getStock().onTransaction(event);
 
             shop.getModule().getLogger().logTransaction(event);
-            product.getCurrency().getHandler().give(player, transaction.getPrice());
+            product.getCurrency().give(player, transaction.getPrice());
             product.take(inventory, transaction.getUnits());
         }
         return transaction;

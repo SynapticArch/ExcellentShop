@@ -3,16 +3,22 @@ package su.nightexpress.nexshop.shop.chest;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.block.Block;
+import org.bukkit.block.BlockFace;
 import org.bukkit.block.Container;
+import org.bukkit.block.ShulkerBox;
 import org.bukkit.entity.Player;
+import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import su.nightexpress.nexshop.api.shop.packer.PluginItemPacker;
-import su.nightexpress.nexshop.shop.ProductHandlerRegistry;
+import su.nightexpress.economybridge.ItemBridge;
+import su.nightexpress.economybridge.api.Currency;
+import su.nightexpress.economybridge.api.item.ItemHandler;
+import su.nightexpress.nexshop.Placeholders;
 import su.nightexpress.nexshop.shop.chest.config.ChestConfig;
 import su.nightexpress.nexshop.shop.chest.config.ChestKeys;
+import su.nightexpress.nexshop.shop.chest.config.ChestPerms;
 import su.nightexpress.nexshop.shop.chest.impl.ChestShop;
 import su.nightexpress.nightcore.language.LangAssets;
 import su.nightexpress.nightcore.util.*;
@@ -32,6 +38,43 @@ public class ChestUtils {
         return Version.isAtLeast(Version.V1_19_R3) && !ChestConfig.DISPLAY_HOLOGRAM_FORCE_ARMOR_STAND.get();
     }
 
+    @Nullable
+    public static Location getSafeLocation(@NotNull Location origin) {
+        Location location = origin.clone();
+
+        while (!isSafeLocation(location) && location.getBlockY() > 0) {
+            location = location.add(0, -1, 0);
+        }
+
+        return location.getBlockY() == 0 ? null : location;
+    }
+
+    public static boolean isSafeLocation(@NotNull Location origin) {
+        Block block = origin.getBlock();
+        return !isDangerousBlock(block) && isSafeBlock(block.getRelative(BlockFace.DOWN));
+    }
+
+    public static boolean isSafeBlock(@NotNull Block block) {
+        Material material = block.getType();
+        return material.isSolid() && !isDangerousBlock(block);
+    }
+
+    public static boolean isDangerousBlock(@NotNull Block block) {
+        Material material = block.getType();
+        return material == Material.LAVA || material == Material.MAGMA_BLOCK;
+    }
+
+    public static boolean bypassHandlerDetection(@NotNull InventoryClickEvent event) {
+        if (!ChestConfig.SHOP_PRODUCT_BYPASS_DETECTION_ENABLED.get()) return false;
+
+        boolean needShift = ChestConfig.SHOP_PRODUCT_BYPASS_DETECTION_HOLD_SHIFT.get();
+        return !needShift || event.isShiftClick();
+    }
+
+    public static boolean isDye(@NotNull Material material) {
+        return BukkitThing.toString(material).endsWith("_dye");
+    }
+
     public static int getShopLimit(@NotNull Player player) {
         return ChestConfig.SHOP_CREATION_MAX_PER_RANK.get().getGreatestOrNegative(player);
     }
@@ -40,14 +83,26 @@ public class ChestUtils {
         return ChestConfig.SHOP_PRODUCTS_MAX_PER_RANK.get().getGreatestOrNegative(player);
     }
 
+    public static int getRentDurationLimit() {
+        return ChestConfig.RENT_MAX_DURATION.get();
+    }
+
+    public static double getRentPriceLimit(@NotNull Currency currency) {
+        return ChestConfig.RENT_MAX_PRICE.get().getOrDefault(currency.getInternalId(), -1D);
+    }
+
+    public static boolean hasCurrencyPermission(@NotNull Player player, @NotNull Currency currency) {
+        return player.hasPermission(ChestPerms.PREFIX_CURRENCY + currency.getInternalId());
+    }
+
     public static boolean isAllowedItem(@NotNull ItemStack item) {
         Set<String> bannedItems = ChestConfig.SHOP_PRODUCT_BANNED_ITEMS.get();
 
         String material = item.getType().getKey().getKey();
         if (bannedItems.contains(material)) return false;
 
-        for (PluginItemPacker pluginItem : ProductHandlerRegistry.getPluginItemPackers()) {
-            String id = pluginItem.getItemId(item);
+        for (ItemHandler handler : ItemBridge.getHandlers()) {
+            String id = handler.getItemId(item);
             if (id != null && bannedItems.contains(id.toLowerCase())) {
                 return false;
             }
@@ -76,7 +131,16 @@ public class ChestUtils {
     }
 
     public static boolean isValidContainer(@NotNull Material material) {
-        return material != Material.ENDER_CHEST && ChestConfig.ALLOWED_CONTAINERS.get().contains(material);
+        if (material == Material.ENDER_CHEST) return false;
+
+        Set<Material> allowed = ChestConfig.ALLOWED_CONTAINERS.get();
+
+        // Unify colored shulker boxes as single material.
+        if (material != Material.SHULKER_BOX && material.createBlockData().createBlockState() instanceof ShulkerBox) {
+            material = Material.SHULKER_BOX;
+        }
+
+        return allowed.contains(material);
     }
 
     public static boolean isInfiniteStorage() {

@@ -7,9 +7,10 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.BlockStateMeta;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import su.nightexpress.economybridge.api.Currency;
 import su.nightexpress.nexshop.ShopPlugin;
-import su.nightexpress.nexshop.api.currency.Currency;
 import su.nightexpress.nexshop.auction.AuctionManager;
+import su.nightexpress.nexshop.auction.AuctionUtils;
 import su.nightexpress.nexshop.auction.ListingCategory;
 import su.nightexpress.nexshop.auction.SortType;
 import su.nightexpress.nexshop.auction.config.AuctionConfig;
@@ -26,7 +27,9 @@ import su.nightexpress.nightcore.menu.api.AutoFill;
 import su.nightexpress.nightcore.menu.item.ItemHandler;
 import su.nightexpress.nightcore.menu.item.MenuItem;
 import su.nightexpress.nightcore.util.*;
+import su.nightexpress.nightcore.util.bukkit.NightItem;
 import su.nightexpress.nightcore.util.placeholder.PlaceholderMap;
+import su.nightexpress.nightcore.util.placeholder.Replacer;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -36,7 +39,7 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
-import static su.nightexpress.nexshop.auction.Placeholders.*;
+import static su.nightexpress.nexshop.Placeholders.*;
 import static su.nightexpress.nightcore.util.text.tag.Tags.*;
 
 public class AuctionMenu extends AbstractAuctionMenu<ActiveListing> {
@@ -74,7 +77,8 @@ public class AuctionMenu extends AbstractAuctionMenu<ActiveListing> {
 
         this.addHandler(this.orderHandler = new ItemHandler("listing_order", (viewer, event) -> {
             Player player = viewer.getPlayer();
-            setListingOrder(player, Lists.next(getListingOrder(player)));
+            SortType type = getListingOrder(player);
+            setListingOrder(player, event.isLeftClick() ? Lists.next(type) : Lists.previous(type));
             this.runNextTick(() -> this.flush(viewer));
         }));
 
@@ -211,15 +215,28 @@ public class AuctionMenu extends AbstractAuctionMenu<ActiveListing> {
                 previewLore.addAll(this.lorePreview);
             }
 
-            ItemReplacer.create(item).trimmed()
+            AuctionUtils.hideListingAttributes(item);
+
+            return NightItem.fromItemStack(item)
                 .setDisplayName(this.itemName)
                 .setLore(this.itemLore)
-                .injectLore(PLACEHOLDER_LORE_FORMAT, this.getLoreFormat(player, listing))
-                .replaceLoreExact(PLACEHOLDER_ACTION_PREVIEW, previewLore)
-                .replace(listing.getPlaceholders())
-                .replacePlaceholderAPI(player)
-                .writeMeta();
-            return item;
+                .replacement(replacer -> replacer
+                    .replace(PLACEHOLDER_LORE_FORMAT, Replacer.create().replace(PLACEHOLDER_ACTION_PREVIEW, previewLore).apply(this.getLoreFormat(player, listing)))
+                    //.replace(PLACEHOLDER_ACTION_PREVIEW, previewLore)
+                    .replace(listing.replacePlaceholders())
+                )
+                .getItemStack();
+
+//            ItemReplacer.create(item).trimmed()
+//                .setDisplayName(this.itemName)
+//                .setLore(this.itemLore)
+//                .injectLore(PLACEHOLDER_LORE_FORMAT, this.getLoreFormat(player, listing))
+//                .replaceLoreExact(PLACEHOLDER_ACTION_PREVIEW, previewLore)
+//                .replace(listing.replacePlaceholders())
+//                .replacePlaceholderAPI(player)
+//                .writeMeta();
+//
+//            return item;
         });
 
         autoFill.setItems(this.auctionManager.getListings().getActive().stream()

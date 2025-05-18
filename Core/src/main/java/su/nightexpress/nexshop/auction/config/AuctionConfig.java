@@ -2,9 +2,9 @@ package su.nightexpress.nexshop.auction.config;
 
 import org.bukkit.GameMode;
 import org.bukkit.Material;
-import su.nightexpress.nexshop.auction.Placeholders;
-import su.nightexpress.nexshop.currency.handler.VaultEconomyHandler;
-import su.nightexpress.nexshop.hook.HookId;
+import su.nightexpress.economybridge.currency.CurrencyId;
+import su.nightexpress.economybridge.item.ItemPlugins;
+import su.nightexpress.nexshop.Placeholders;
 import su.nightexpress.nightcore.config.ConfigValue;
 import su.nightexpress.nightcore.util.BukkitThing;
 import su.nightexpress.nightcore.util.Lists;
@@ -20,15 +20,21 @@ import java.util.stream.IntStream;
 public class AuctionConfig {
 
     public static final ConfigValue<String> DEFAULT_CURRENCY = ConfigValue.create("Settings.Default_Currency",
-        VaultEconomyHandler.ID,
+        CurrencyId.VAULT,
         "Sets default Auction currency."
-    );
+    ).onRead(CurrencyId::reroute);
 
     public static final ConfigValue<Set<String>> ALLOWED_CURRENCIES = ConfigValue.create("Settings.Allowed_Currencies",
         Set.of(Placeholders.WILDCARD),
         "List of currencies available to use by players.",
         "You can use asterisk '" + Placeholders.WILDCARD + "' to allow all currencies."
-    );
+    ).onRead(set -> Lists.modify(set, CurrencyId::reroute));
+
+    public static final ConfigValue<Set<String>> DISABLED_ITEM_HANDLERS = ConfigValue.create("Settings.Disabled_Item_Handlers",
+        Lists.newSet("mmoitems"),
+        "List of custom item handler IDs that should be ignored for auction listings and added as normal items.",
+        "https://nightexpressdev.com/economy-bridge/items/"
+    ).onRead(set -> Lists.modify(set, String::toLowerCase));
 
     public static final ConfigValue<Set<String>> DISABLED_WORLDS = ConfigValue.create("Settings.Disabled_Worlds",
         Lists.newSet("custom_world", "another_world"),
@@ -43,6 +49,20 @@ public class AuctionConfig {
         "Players can not add items to the Auction in the following gamemodes.",
         "https://hub.spigotmc.org/javadocs/spigot/org/bukkit/GameMode.html"
     );
+
+    public static final ConfigValue<Boolean> NOTIFY_UNCLAIMED_ON_JOIN = ConfigValue.create("Settings.Notify_Unclaimed_On_Join",
+        true,
+        "When enabled, players will receive a message about unclaimed listings when they join the server."
+    );
+
+    public static final ConfigValue<Boolean> NOTIFY_EXPIRED_ON_JOIN = ConfigValue.create("Settings.Notify_Expired_On_Join",
+        true,
+        "When enabled, players will receive a message about expired listings when they join the server."
+    );
+
+    public static final ConfigValue<Boolean> LISTINGS_HIDE_ATTRIBUTES = ConfigValue.create("Settings.Listings.Hide_Attributes",
+        false,
+        "When enabled, will hide item attributes (damage, durability, etc.) of auction listings.");
 
     public static final ConfigValue<Long> LISTINGS_EXPIRE_TIME = ConfigValue.create("Settings.Listings.Expire_In",
         604800L,
@@ -95,7 +115,7 @@ public class AuctionConfig {
         (cfg, path, map) -> map.forEach((id, range) -> range.write(cfg, path + "." + id)),
         () -> Map.of(
             Placeholders.DEFAULT, UniDouble.of(-1, -1),
-            VaultEconomyHandler.ID, UniDouble.of(1, 10_000_000)
+            CurrencyId.VAULT, UniDouble.of(1, 10_000_000)
         ),
         "Sets min. and max. possible listing price for specified currencies.",
         "Use '-1' for unlimited amount.",
@@ -137,7 +157,7 @@ public class AuctionConfig {
         ),
         "List of items that can not be added as shop products.",
         "Vanilla Names: https://minecraft.wiki/w/Java_Edition_data_values -> Blocks / Items -> Resource location column.",
-        "Supported Plugins: " + String.join(", ", HookId.getItemPluginNames())
+        "Supported Plugins: " + String.join(", ", ItemPlugins.values())
     );
 
     public static final ConfigValue<Set<String>> LISTINGS_DISABLED_NAMES = ConfigValue.create("Settings.Listings.Disabled_Names",
@@ -165,6 +185,11 @@ public class AuctionConfig {
             Material.DIAMOND_HELMET, Set.of(1002, 1016)
         ),
         "List of item's model data values to be disabled from adding in Auction."
+    );
+
+    public static final ConfigValue<Boolean> MENU_REOPEN_ON_PURCHASE = ConfigValue.create("Menu.ReOpen_On_Purchase",
+        true,
+        "Controls whether Auction GUI should re-open on purchase instead of closing."
     );
 
     public static final ConfigValue<Boolean> MENU_CONTAINER_PREVIEW_ENABLED = ConfigValue.create("Menu.Container_Preview.Enabled",

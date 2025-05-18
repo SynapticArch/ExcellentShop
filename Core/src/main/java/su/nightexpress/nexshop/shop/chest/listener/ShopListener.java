@@ -4,6 +4,7 @@ import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.block.Block;
 import org.bukkit.block.Chest;
+import org.bukkit.block.Container;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -15,6 +16,7 @@ import org.bukkit.event.inventory.InventoryMoveItemEvent;
 import org.bukkit.event.inventory.InventoryType;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.world.WorldLoadEvent;
 import org.bukkit.event.world.WorldUnloadEvent;
 import org.bukkit.inventory.DoubleChestInventory;
@@ -22,16 +24,21 @@ import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.jetbrains.annotations.NotNull;
+import su.nightexpress.economybridge.EconomyBridge;
+import su.nightexpress.economybridge.api.Currency;
 import su.nightexpress.nexshop.Placeholders;
 import su.nightexpress.nexshop.ShopPlugin;
+import su.nightexpress.nexshop.api.shop.type.TradeType;
 import su.nightexpress.nexshop.shop.chest.ChestShopModule;
 import su.nightexpress.nexshop.shop.chest.ChestUtils;
 import su.nightexpress.nexshop.shop.chest.config.ChestConfig;
 import su.nightexpress.nexshop.shop.chest.config.ChestLang;
 import su.nightexpress.nexshop.shop.chest.impl.ChestBank;
+import su.nightexpress.nexshop.shop.chest.impl.ChestProduct;
 import su.nightexpress.nexshop.shop.chest.impl.ChestShop;
 import su.nightexpress.nightcore.manager.AbstractListener;
 
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 public class ShopListener extends AbstractListener<ShopPlugin> {
@@ -44,17 +51,32 @@ public class ShopListener extends AbstractListener<ShopPlugin> {
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
+    public void onPlayerQuit(PlayerQuitEvent event) {
+        var displayHandler = this.module.getDisplayHandler();
+        if (displayHandler != null) {
+            displayHandler.handleQuit(event.getPlayer());
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
     public void onPlayerJoin(PlayerJoinEvent event) {
-        if (!ChestConfig.SHOP_AUTO_BANK.get()) return;
+        if (!ChestConfig.isAutoBankEnabled()) return;
 
         Player player = event.getPlayer();
         ChestBank bank = this.module.getPlayerBank(player);
-        bank.getBalanceMap().forEach((currency, amount) -> {
-            currency.getHandler().give(player, amount);
+        bank.getBalanceMap().forEach((currencyId, amount) -> {
+            EconomyBridge.deposit(player, currencyId, amount);
         });
 
         if (bank.getBalanceMap().values().stream().anyMatch(amount -> amount > 0)) {
-            String balances = bank.getBalanceMap().entrySet().stream().map(entry -> entry.getKey().format(entry.getValue())).collect(Collectors.joining(", "));
+            String balances = bank.getBalanceMap().entrySet().stream().map(entry -> {
+                    Currency currency = EconomyBridge.getCurrency(entry.getKey());
+                    if (currency == null) return null;
+
+                    return currency.format(entry.getValue());
+                })
+                .filter(Objects::nonNull).collect(Collectors.joining(", "));
+
             ChestLang.NOTIFICATION_SHOP_EARNINGS.getMessage()
                 .replace(Placeholders.GENERIC_AMOUNT, balances)
                 .send(player);
@@ -100,13 +122,33 @@ public class ShopListener extends AbstractListener<ShopPlugin> {
         ChestShop shop = this.module.getShop(block);
         if (shop == null) return;
 
-        if (!shop.isOwner(player)) {
+        if (player.getGameMode() == GameMode.CREATIVE) {
             event.setCancelled(true);
-            ChestLang.SHOP_ERROR_NOT_OWNER.getMessage().send(player);
             return;
         }
 
-        if (player.getGameMode() == GameMode.CREATIVE || !this.module.deleteShop(player, block)) {
+        if (ChestUtils.isInfiniteStorage() && !shop.getBlock().getLocation().equals(block.getLocation())) {
+            var sides = shop.getSides();
+            if (sides.getFirst() != sides.getSecond()) {
+                if (!this.module.canBreak(player, shop)) {
+                    event.setCancelled(true);
+                    return;
+                }
+
+                this.plugin.runTask(task -> {
+                    this.module.getShopMap().updatePositionCache(shop);
+                });
+                return;
+            }
+        }
+
+//        if (!shop.isOwner(player)) {
+//            event.setCancelled(true);
+//            ChestLang.SHOP_ERROR_NOT_OWNER.getMessage().send(player);
+//            return;
+//        }
+
+        if (!this.module.deleteShop(player, block)) {
             event.setCancelled(true);
         }
     }
@@ -155,7 +197,7 @@ public class ShopListener extends AbstractListener<ShopPlugin> {
         Inventory from = event.getSource();
 
         // Prevent to steal items from the chest shop.
-        if (target.getType() == InventoryType.HOPPER && from.getType() == InventoryType.CHEST) {
+        if (target.getType() == InventoryType.HOPPER && from.getHolder() instanceof Container) {
             ChestShop shop = this.module.getShop(from);
             if (shop != null) {
                 event.setCancelled(true);
@@ -164,13 +206,21 @@ public class ShopListener extends AbstractListener<ShopPlugin> {
         }
 
         // Prevent to put different from a product items to the chest shop.
-        if (target.getType() == InventoryType.CHEST && from.getType() == InventoryType.HOPPER) {
+        if (target.getHolder() instanceof Container && from.getType() == InventoryType.HOPPER) {
             ChestShop shop = this.module.getShop(target);
             if (shop == null) return;
 
             ItemStack item = event.getItem();
-            if (!shop.isProduct(item) || ChestUtils.isInfiniteStorage()) {
+            ChestProduct product = shop.getProduct(item);
+            if (product == null) {
                 event.setCancelled(true);
+                return;
+            }
+
+            if (ChestUtils.isInfiniteStorage()) {
+                // Do not cancel, instead reduce item quantity.
+                item.setAmount(item.getAmount() - 1);
+                product.storeStock(TradeType.BUY, 1, null);
             }
         }
     }

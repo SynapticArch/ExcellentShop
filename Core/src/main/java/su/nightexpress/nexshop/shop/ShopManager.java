@@ -1,22 +1,31 @@
 package su.nightexpress.nexshop.shop;
 
 import org.bukkit.entity.Player;
+import org.bukkit.event.inventory.ClickType;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import su.nightexpress.nexshop.Placeholders;
 import su.nightexpress.nexshop.ShopPlugin;
 import su.nightexpress.nexshop.api.shop.Shop;
 import su.nightexpress.nexshop.api.shop.product.PreparedProduct;
+import su.nightexpress.nexshop.api.shop.product.Product;
+import su.nightexpress.nexshop.api.shop.type.ShopClickAction;
+import su.nightexpress.nexshop.api.shop.type.TradeType;
 import su.nightexpress.nexshop.config.Config;
 import su.nightexpress.nexshop.config.Lang;
+import su.nightexpress.nexshop.config.Perms;
 import su.nightexpress.nexshop.shop.chest.ChestShopModule;
-import su.nightexpress.nexshop.shop.menu.CartMenu;
+import su.nightexpress.nexshop.shop.chest.impl.ChestShop;
+import su.nightexpress.nexshop.shop.menu.*;
 import su.nightexpress.nexshop.shop.virtual.VirtualShopModule;
-import su.nightexpress.nexshop.shop.virtual.impl.RotatingShop;
-import su.nightexpress.nexshop.shop.virtual.impl.StaticShop;
+import su.nightexpress.nexshop.util.ShopUtils;
 import su.nightexpress.nightcore.config.FileConfig;
+import su.nightexpress.nightcore.language.entry.LangText;
 import su.nightexpress.nightcore.manager.AbstractManager;
-import su.nightexpress.nightcore.menu.api.Menu;
+import su.nightexpress.nightcore.ui.menu.Menu;
+import su.nightexpress.nightcore.ui.menu.MenuRegistry;
+import su.nightexpress.nightcore.ui.menu.MenuViewer;
+import su.nightexpress.nightcore.util.ItemUtil;
 
 import java.io.File;
 import java.util.HashMap;
@@ -26,9 +35,10 @@ import java.util.Set;
 
 public class ShopManager extends AbstractManager<ShopPlugin> {
 
-    //private CartMenu cartMenu;
-
     private final Map<String, CartMenu> cartMenuMap;
+
+    private ConfirmMenu confirmMenu;
+    private PurchaseOptionMenu purchaseOptionMenu;
 
     public ShopManager(@NotNull ShopPlugin plugin) {
         super(plugin);
@@ -37,17 +47,25 @@ public class ShopManager extends AbstractManager<ShopPlugin> {
 
     @Override
     protected void onLoad() {
-        //this.cartMenu = new CartMenu(this.plugin);
+        this.loadUI();
         this.loadCartUIs();
 
-        this.addTask(this.plugin.createAsyncTask(this::updateShops).setSecondsInterval(Config.SHOP_UPDATE_INTERVAL.get()));
+        this.addTask(this::updateShops, Config.SHOP_UPDATE_INTERVAL.get());
+
+        this.plugin.runTaskLater(task -> this.printBadProducts(), 100L);
     }
 
     @Override
     protected void onShutdown() {
-        //if (this.cartMenu != null) this.cartMenu.clear();
+        if (this.purchaseOptionMenu != null) this.purchaseOptionMenu.clear();
+
         this.cartMenuMap.values().forEach(Menu::clear);
         this.cartMenuMap.clear();
+    }
+
+    private void loadUI() {
+        this.confirmMenu = this.addMenu(new ConfirmMenu(this.plugin));
+        this.purchaseOptionMenu = new PurchaseOptionMenu(this.plugin);
     }
 
     private void loadCartUIs() {
@@ -57,42 +75,56 @@ public class ShopManager extends AbstractManager<ShopPlugin> {
             new CartMenu(this.plugin, FileConfig.loadOrExtract(plugin, Config.DIR_CARTS, Placeholders.DEFAULT + ".yml"));
         }
 
-        for (FileConfig config : FileConfig.loadAll(plugin.getDataFolder() + Config.DIR_CARTS)) {
+        for (FileConfig config : FileConfig.loadAll(plugin.getDataFolder() + Config.DIR_CARTS, true)) {
+            // ============= UPDATE TO 4.14 - START =============
+            config.getSection("Content").forEach(itemId -> {
+                int units = config.getInt("Content." + itemId + ".Units", 0);
+                if (units == 0) return;
+
+                String type = config.getString("Content." + itemId + ".Type");
+                if (type == null || type.isBlank()) return;
+
+                String result;
+                if (units > 1000 && type.equalsIgnoreCase("set")) result = "set_max";
+                else if (type.equalsIgnoreCase("set_custom")) result = type;
+                else result = type + "_" + units;
+
+                config.set("Content." + itemId + ".Type", result);
+                config.remove("Content." + itemId + ".Units");
+            });
+            // ============= UPDATE TO 4.14 - END =============
+
             CartMenu cartMenu = new CartMenu(this.plugin, config);
             this.cartMenuMap.put(FileConfig.getName(config.getFile()), cartMenu);
         }
         this.plugin.info("Loaded " + this.cartMenuMap.size() + " product cart UIs!");
     }
 
-    private void updateShops() {
+    @NotNull
+    public Set<Shop> getShops() {
         Set<Shop> shops = new HashSet<>();
 
         VirtualShopModule virtualShopModule = plugin.getVirtualShop();
         if (virtualShopModule != null) {
-            virtualShopModule.getShops().forEach(shop -> {
-                if (!shop.isLoaded()) return;
-
-                shops.add(shop);
-
-                if (shop instanceof StaticShop staticShop) {
-                    staticShop.getDiscountConfigs().forEach(discount -> {
-                        if (discount.isDiscountTime()) {
-                            discount.update();
-                        }
-                    });
-                }
-                else if (shop instanceof RotatingShop rotatingShop) {
-                    rotatingShop.tryRotate();
-                }
-            });
+            shops.addAll(virtualShopModule.getShops());
         }
 
         ChestShopModule chestShopModule = plugin.getChestShop();
         if (chestShopModule != null) {
-            shops.addAll(chestShopModule.getActiveShops());
+            shops.addAll(chestShopModule.getShops());
         }
 
-        shops.forEach(shop -> shop.getPricer().updatePrices());
+        return shops;
+    }
+
+    public void updateShops() {
+        if (!this.plugin.getDataManager().isLoaded()) return;
+
+        this.getShops().forEach(Shop::update);
+    }
+
+    private void printBadProducts() {
+        this.getShops().forEach(Shop::printBadProducts);
     }
 
     @Nullable
@@ -100,14 +132,120 @@ public class ShopManager extends AbstractManager<ShopPlugin> {
         return this.cartMenuMap.getOrDefault(id.toLowerCase(), this.cartMenuMap.get(Placeholders.DEFAULT));
     }
 
+    public void onProductClick(@NotNull Player player, @NotNull Product product, @NotNull ClickType clickType, @NotNull Menu source) {
+        if (!product.isAvailable(player)) {
+            source.runNextTick(() -> source.flush(player));
+            return;
+        }
+
+        Shop shop = product.getShop();
+
+        ShopClickAction action = ShopUtils.getClickAction(player, clickType, shop, product);
+        if (action == ShopClickAction.UNDEFINED) return;
+
+        if (action == ShopClickAction.SELL_ALL && !player.hasPermission(Perms.KEY_SELL_ALL)) {
+            Lang.ERROR_NO_PERMISSION.getMessage(this.plugin).send(player);
+            return;
+        }
+
+        source.runNextTick(() -> this.startTrade(player, product, action, source));
+    }
+
+    public boolean startTrade(@NotNull Player player, @NotNull Product product, @NotNull ShopClickAction action, @Nullable Menu source) {
+        TradeType tradeType = action.getTradeType();
+
+        if (tradeType != null) {
+            return this.startTrade(player, product, tradeType, action, source);
+        }
+
+        this.openPurchaseOption(player, product);
+        return true;
+    }
+
+    public boolean startTrade(@NotNull Player player, @NotNull Product product, @NotNull TradeType tradeType, @Nullable ShopClickAction action, @Nullable Menu source) {
+        Shop shop = product.getShop();
+
+        if (tradeType == TradeType.BUY) {
+            if (!product.isBuyable()) {
+                Lang.SHOP_PRODUCT_ERROR_UNBUYABLE.getMessage().send(player);
+                return false;
+            }
+            if (!Config.GENERAL_BUY_WITH_FULL_INVENTORY.get() && !product.hasSpace(player)) {
+                Lang.SHOP_PRODUCT_ERROR_FULL_INVENTORY.getMessage().send(player);
+                return false;
+            }
+        }
+        else if (tradeType == TradeType.SELL) {
+            if (!product.isSellable()) {
+                Lang.SHOP_PRODUCT_ERROR_UNSELLABLE.getMessage().send(player);
+                return false;
+            }
+            if (product.countUnits(player) < 1) {
+                Lang.SHOP_PRODUCT_ERROR_NOT_ENOUGH_ITEMS.getMessage().send(player, replacer -> replacer
+                    .replace(Placeholders.GENERIC_AMOUNT, product.getUnitAmount())
+                    .replace(Placeholders.GENERIC_ITEM, ItemUtil.getSerializedName(product.getPreview()))
+                );
+                return false;
+            }
+        }
+
+        // For Virtual Shop will return either Stock or Player Limit amount.
+        // For Chest Shop will return inventory space or item amount.
+        int canPurchase = product.getAvailableAmount(player, tradeType);
+        if (canPurchase == 0) {
+            LangText msgStock;
+            if (tradeType == TradeType.BUY) {
+                msgStock = Lang.SHOP_PRODUCT_ERROR_OUT_OF_STOCK;
+            }
+            else {
+                if (shop instanceof ChestShop) {
+                    msgStock = Lang.SHOP_PRODUCT_ERROR_OUT_OF_SPACE;
+                }
+                else msgStock = Lang.SHOP_PRODUCT_ERROR_FULL_STOCK;
+            }
+            msgStock.getMessage().send(player);
+            return false;
+        }
+
+        boolean isSellAll = (action == ShopClickAction.SELL_ALL);
+        PreparedProduct prepared = product.getPrepared(player, tradeType, isSellAll);
+
+        if (action != null) {
+            if (action == ShopClickAction.BUY_SINGLE || action == ShopClickAction.SELL_SINGLE || prepared.isAll()) {
+                prepared.trade();
+
+                if (source != null) {
+                    source.flush(player);
+                }
+                return true;
+            }
+        }
+
+        return this.openProductCart(player, prepared);
+    }
+
     public boolean openProductCart(@NotNull Player player, @NotNull PreparedProduct product) {
-        CartMenu cartMenu = this.getCartUI(product.getShop().getModule().getDefaultCartUI());
+        MenuViewer viewer = MenuRegistry.getViewer(player);
+        int page = viewer == null ? 1 : viewer.getPage();
+
+        CartMenu cartMenu = this.getCartUI(product.getShop().getModule().getDefaultCartUI(product.getTradeType()));
         if (cartMenu == null) {
             Lang.SHOP_PRODUCT_ERROR_INVALID_CART_UI.getMessage().send(player);
             return false;
         }
 
-        cartMenu.open(player, product);
+        cartMenu.open(player, new Breadcumb<>(product, page));
         return true;
+    }
+
+    public void openPurchaseOption(@NotNull Player player, @NotNull Product product) {
+        MenuViewer viewer = MenuRegistry.getViewer(player);
+        int page = viewer == null ? 1 : viewer.getPage();
+
+        this.purchaseOptionMenu.open(player, new Breadcumb<>(product, page));
+    }
+
+    public void openConfirmation(@NotNull Player player, @NotNull Confirmation confirmation) {
+        this.confirmMenu.open(player, confirmation);
     }
 }

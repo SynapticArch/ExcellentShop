@@ -20,20 +20,20 @@ import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import su.nightexpress.economybridge.EconomyBridge;
+import su.nightexpress.economybridge.api.Currency;
+import su.nightexpress.economybridge.currency.CurrencyId;
 import su.nightexpress.nexshop.Placeholders;
 import su.nightexpress.nexshop.ShopPlugin;
-import su.nightexpress.nexshop.api.currency.Currency;
+import su.nightexpress.nexshop.api.shop.ShopModule;
 import su.nightexpress.nexshop.api.shop.TransactionLogger;
-import su.nightexpress.nexshop.api.shop.TransactionModule;
 import su.nightexpress.nexshop.api.shop.event.ChestShopCreateEvent;
 import su.nightexpress.nexshop.api.shop.event.ChestShopRemoveEvent;
-import su.nightexpress.nexshop.api.shop.packer.ItemPacker;
-import su.nightexpress.nexshop.api.shop.packer.PluginItemPacker;
+import su.nightexpress.nexshop.api.shop.product.typing.PhysicalTyping;
+import su.nightexpress.nexshop.api.shop.product.typing.PluginTyping;
 import su.nightexpress.nexshop.api.shop.type.TradeType;
 import su.nightexpress.nexshop.config.Config;
-import su.nightexpress.nexshop.currency.CurrencyManager;
 import su.nightexpress.nexshop.hook.HookId;
-import su.nightexpress.nexshop.module.AbstractShopModule;
 import su.nightexpress.nexshop.shop.chest.command.*;
 import su.nightexpress.nexshop.shop.chest.compatibility.*;
 import su.nightexpress.nexshop.shop.chest.config.ChestConfig;
@@ -41,30 +41,37 @@ import su.nightexpress.nexshop.shop.chest.config.ChestKeys;
 import su.nightexpress.nexshop.shop.chest.config.ChestLang;
 import su.nightexpress.nexshop.shop.chest.config.ChestPerms;
 import su.nightexpress.nexshop.shop.chest.display.DisplayHandler;
+import su.nightexpress.nexshop.shop.chest.display.PacketEventsHandler;
+import su.nightexpress.nexshop.shop.chest.display.ProtocolLibHandler;
 import su.nightexpress.nexshop.shop.chest.impl.ChestBank;
 import su.nightexpress.nexshop.shop.chest.impl.ChestProduct;
 import su.nightexpress.nexshop.shop.chest.impl.ChestShop;
-import su.nightexpress.nexshop.shop.chest.impl.ChestStock;
 import su.nightexpress.nexshop.shop.chest.listener.RegionMarketListener;
 import su.nightexpress.nexshop.shop.chest.listener.ShopListener;
 import su.nightexpress.nexshop.shop.chest.listener.UpgradeHopperListener;
 import su.nightexpress.nexshop.shop.chest.menu.*;
+import su.nightexpress.nexshop.shop.chest.rent.RentSettings;
 import su.nightexpress.nexshop.shop.chest.util.BlockPos;
 import su.nightexpress.nexshop.shop.chest.util.ShopMap;
-import su.nightexpress.nexshop.shop.chest.util.ShopType;
+import su.nightexpress.nexshop.shop.impl.AbstractModule;
+import su.nightexpress.nexshop.shop.menu.Confirmation;
 import su.nightexpress.nightcore.command.experimental.builder.ChainedNodeBuilder;
 import su.nightexpress.nightcore.config.FileConfig;
 import su.nightexpress.nightcore.language.LangAssets;
-import su.nightexpress.nightcore.menu.MenuViewer;
 import su.nightexpress.nightcore.util.*;
+import su.nightexpress.nightcore.util.text.NightMessage;
+import su.nightexpress.nightcore.util.text.tag.TagPool;
+import su.nightexpress.nightcore.util.time.TimeFormats;
 
 import java.io.File;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 import java.util.stream.Stream;
 
-public class ChestShopModule extends AbstractShopModule implements TransactionModule {
+public class ChestShopModule extends AbstractModule implements ShopModule {
 
     public static final String ID = "chest_shop";
     public static final String DIR_SHOPS = "/shops/";
@@ -77,8 +84,9 @@ public class ChestShopModule extends AbstractShopModule implements TransactionMo
     private ShopProductsMenu productsMenu;
     private ShopDisplayMenu  displayMenu;
     private ShopShowcaseMenu showcaseMenu;
-    private ProductPriceMenu productPriceMenu;
+    private PriceMenu productPriceMenu;
 
+    private RentMenu       rentMenu;
     private BankMenu       bankMenu;
     private StorageMenu    storageMenu;
     private ShopBrowseMenu browseMenu;
@@ -87,7 +95,7 @@ public class ChestShopModule extends AbstractShopModule implements TransactionMo
     private ShopView       shopView;
 
     private Set<ClaimHook> claimHooks;
-    private DisplayHandler displayHandler;
+    private DisplayHandler<?> displayHandler;
 
     private TransactionLogger logger;
 
@@ -112,6 +120,7 @@ public class ChestShopModule extends AbstractShopModule implements TransactionMo
         this.logger = new TransactionLogger(this, config);
 
         this.loadCurrencies();
+        this.loadDisplayHandler();
         this.loadHooks();
 
         this.addListener(new ShopListener(this.plugin, this));
@@ -120,9 +129,12 @@ public class ChestShopModule extends AbstractShopModule implements TransactionMo
         this.displayMenu = new ShopDisplayMenu(this.plugin, this);
         this.showcaseMenu = new ShopShowcaseMenu(this.plugin, this);
         this.productsMenu = new ShopProductsMenu(this.plugin, this);
-        this.productPriceMenu = new ProductPriceMenu(this.plugin, this);
+        this.productPriceMenu = new PriceMenu(this.plugin, this);
         if (ChestUtils.isInfiniteStorage()) {
             this.storageMenu = new StorageMenu(this.plugin, this);
+        }
+        if (ChestConfig.isRentEnabled()) {
+            this.rentMenu = new RentMenu(this.plugin, this);
         }
 
         this.bankMenu = new BankMenu(this.plugin, this);
@@ -153,6 +165,10 @@ public class ChestShopModule extends AbstractShopModule implements TransactionMo
             this.storageMenu.clear();
             this.storageMenu = null;
         }
+        if (this.rentMenu != null) {
+            this.rentMenu.clear();
+            this.rentMenu = null;
+        }
 
         if (this.productsMenu != null) this.productsMenu.clear();
         if (this.productPriceMenu != null) this.productPriceMenu.clear();
@@ -173,8 +189,8 @@ public class ChestShopModule extends AbstractShopModule implements TransactionMo
     }
 
     @Override
-    protected void addCommands(@NotNull ChainedNodeBuilder builder) {
-        if (!ChestConfig.SHOP_AUTO_BANK.get()) {
+    protected void loadCommands(@NotNull ChainedNodeBuilder builder) {
+        if (!ChestConfig.isAutoBankEnabled()) {
             BankCommand.build(this.plugin, this, builder);
         }
         if (ChestConfig.SHOP_ITEM_CREATION_ENABLED.get()) {
@@ -189,7 +205,7 @@ public class ChestShopModule extends AbstractShopModule implements TransactionMo
 
     public void loadCurrencies() {
         for (String curId : ChestConfig.ALLOWED_CURRENCIES.get()) {
-            Currency currency = this.plugin.getCurrencyManager().getCurrency(curId);
+            Currency currency = EconomyBridge.getCurrency(curId);
             if (currency == null) {
                 this.error("Unknown currency '" + curId + "'. Skipping.");
                 continue;
@@ -198,7 +214,7 @@ public class ChestShopModule extends AbstractShopModule implements TransactionMo
         }
 
         Currency def = this.getDefaultCurrency();
-        if (def == CurrencyManager.DUMMY_CURRENCY) {
+        if (def.isDummy()) {
             this.error("You have invalid currency set in the 'Default_Currency' setting.");
             this.error("You must fix this issue to make your shops working properly.");
         }
@@ -208,19 +224,14 @@ public class ChestShopModule extends AbstractShopModule implements TransactionMo
     }
 
     private void loadHooks() {
-        if (Plugins.isLoaded(HookId.PROTOCOL_LIB)) {
-            this.displayHandler = new DisplayHandler(this.plugin, this);
-            this.displayHandler.setup();
-
-            this.addTask(this.plugin.createAsyncTask(() -> this.displayHandler.update()).setSecondsInterval(ChestConfig.DISPLAY_UPDATE_INTERVAL.get()));
-        }
-
         if (ChestConfig.SHOP_CREATION_CLAIM_ONLY.get()) {
             this.claimHooks = new HashSet<>();
-            if (Plugins.isInstalled(HookId.LANDS)) this.claimHooks.add(new LandsHook(this.plugin));
-            if (Plugins.isInstalled(HookId.GRIEF_PREVENTION)) this.claimHooks.add(new GriefPreventionHook());
-            if (Plugins.isInstalled(HookId.WORLD_GUARD)) this.claimHooks.add(new WorldGuardFlags());
-            if (Plugins.isInstalled(HookId.KINGDOMS)) this.claimHooks.add(new KingdomsHook());
+            this.loadClaimHook(HookId.LANDS, () -> new LandsHook(this.plugin));
+            this.loadClaimHook(HookId.GRIEF_PREVENTION, GriefPreventionHook::new);
+            this.loadClaimHook(HookId.GRIEF_DEFENDER, GriefDefenderHook::new);
+            this.loadClaimHook(HookId.WORLD_GUARD, WorldGuardHook::new);
+            this.loadClaimHook(HookId.KINGDOMS, KingdomsHook::new);
+            this.loadClaimHook(HookId.HUSK_CLAIMS, HuskClaimsHook::new);
         }
 
         if (Plugins.isInstalled(HookId.ADVANCED_REGION_MARKET)) {
@@ -234,11 +245,34 @@ public class ChestShopModule extends AbstractShopModule implements TransactionMo
         }
     }
 
+    private boolean loadClaimHook(@NotNull String plugin, @NotNull Supplier<ClaimHook> supplier) {
+        if (!Plugins.isInstalled(plugin)) return false;
+
+        this.claimHooks.add(supplier.get());
+        this.info("Hooked into claim plugin: " + plugin);
+        return true;
+    }
+
+    private void loadDisplayHandler() {
+        if (Plugins.isInstalled(HookId.PACKET_EVENTS)) {
+            this.displayHandler = new PacketEventsHandler(this.plugin, this);
+        }
+        else if (Plugins.isLoaded(HookId.PROTOCOL_LIB)) {
+            this.displayHandler = new ProtocolLibHandler(this.plugin, this);
+        }
+
+        if (this.displayHandler != null) {
+            this.displayHandler.setup();
+
+            this.addAsyncTask(() -> this.displayHandler.update(), ChestConfig.DISPLAY_UPDATE_INTERVAL.get());
+        }
+    }
+
     public void loadBanks() {
-        this.plugin.getData().getChestDataHandler().getChestBanks().forEach(bank -> {
+        this.plugin.getDataHandler().loadChestBanks().forEach(bank -> {
             // Add missing currencies to display them as 0 in balance placeholder, so they are visible.
             this.getAllowedCurrencies().forEach(currency -> {
-                bank.getBalanceMap().computeIfAbsent(currency, k -> 0D);
+                bank.getBalanceMap().computeIfAbsent(currency.getInternalId(), k -> 0D);
             });
 
             this.getBankMap().put(bank.getHolder(), bank);
@@ -250,15 +284,6 @@ public class ChestShopModule extends AbstractShopModule implements TransactionMo
             this.loadShop(config);
         }
         this.info("Shops Loaded: " + this.getShops().size());
-
-        this.plugin.runTaskAsync(task -> this.loadShopData());
-    }
-
-    public void loadShopData() {
-        this.getShops().forEach(shop -> {
-            shop.getPricer().load();
-            shop.getStock().load();
-        });
     }
 
     public boolean loadShop(@NotNull FileConfig config) {
@@ -278,9 +303,9 @@ public class ChestShopModule extends AbstractShopModule implements TransactionMo
         if (config.contains("Bank")) {
             ChestBank bank = this.getPlayerBank(shop.getOwnerId());
             for (Currency currency : this.getAllowedCurrencies()) {
-                bank.deposit(currency, config.getDouble("Bank." + currency.getId()));
+                bank.deposit(currency, config.getDouble("Bank." + currency.getInternalId()));
             }
-            this.plugin.getData().getChestDataHandler().saveChestBank(bank);
+            this.plugin.getDataHandler().saveChestBank(bank);
             config.remove("Bank");
             config.saveChanges();
         }
@@ -293,6 +318,9 @@ public class ChestShopModule extends AbstractShopModule implements TransactionMo
     }
 
     public void unloadShop(@NotNull ChestShop shop) {
+        if (ChestUtils.isInfiniteStorage()) {
+            shop.saveProductQuantity();
+        }
         if (this.displayHandler != null) {
             this.displayHandler.remove(shop);
         }
@@ -301,9 +329,9 @@ public class ChestShopModule extends AbstractShopModule implements TransactionMo
     }
 
     public void removeShop(@NotNull ChestShop shop) {
-        if (!shop.getFile().delete()) return;
-
         this.unloadShop(shop);
+
+        shop.getFile().delete();
     }
 
     @NotNull
@@ -321,7 +349,7 @@ public class ChestShopModule extends AbstractShopModule implements TransactionMo
         ChestBank bank = this.getBankMap().get(uuid);
         if (bank == null) {
             ChestBank bank2 = new ChestBank(uuid, new HashMap<>());
-            this.plugin.runTaskAsync(task -> this.plugin.getData().getChestDataHandler().createChestBank(bank2));
+            this.plugin.runTaskAsync(task -> this.plugin.getDataHandler().createChestBank(bank2));
             this.getBankMap().put(uuid, bank2);
             return bank2;
         }
@@ -336,7 +364,7 @@ public class ChestShopModule extends AbstractShopModule implements TransactionMo
     }
 
     public void savePlayerBank(@NotNull ChestBank bank) {
-        this.plugin.runTaskAsync(task -> this.plugin.getData().getChestDataHandler().saveChestBank(bank));
+        this.plugin.runTaskAsync(task -> this.plugin.getDataHandler().saveChestBank(bank));
     }
 
     @NotNull
@@ -345,18 +373,33 @@ public class ChestShopModule extends AbstractShopModule implements TransactionMo
     }
 
     public boolean isAllowedCurrency(@NotNull Currency currency) {
-        return this.getAllowedCurrencies().contains(currency);
+        return this.allowedCurrencies.contains(currency);
+    }
+
+    public boolean isAllowedCurrency(@NotNull Currency currency, @NotNull Player player) {
+        return this.isAllowedCurrency(currency) && (!ChestConfig.CHECK_CURRENCY_PERMISSIONS.get() || ChestUtils.hasCurrencyPermission(player, currency));
     }
 
     @NotNull
     public Set<Currency> getAllowedCurrencies() {
-        return this.allowedCurrencies;
+        return new HashSet<>(this.allowedCurrencies);
+    }
+
+    @NotNull
+    public Set<Currency> getAllowedCurrencies(@NotNull Player player) {
+        Set<Currency> currencies = this.getAllowedCurrencies();
+
+        // Remove currency for which player dont have permissions.
+        if (ChestConfig.CHECK_CURRENCY_PERMISSIONS.get()) {
+            currencies.removeIf(currency -> !ChestUtils.hasCurrencyPermission(player, currency));
+        }
+
+        return currencies;
     }
 
     @NotNull
     public Currency getDefaultCurrency() {
-        Currency currency = this.plugin.getCurrencyManager().getCurrency(ChestConfig.DEFAULT_CURRENCY.get());
-        return currency == null ? CurrencyManager.DUMMY_CURRENCY : currency;
+        return EconomyBridge.getCurrencyOrDummy(ChestConfig.DEFAULT_CURRENCY.get());
     }
 
     @Override
@@ -410,6 +453,12 @@ public class ChestShopModule extends AbstractShopModule implements TransactionMo
         this.storageMenu.open(player, shop);
     }
 
+    public void openRentSettings(@NotNull Player player, @NotNull ChestShop shop) {
+        if (this.rentMenu == null) return;
+
+        this.rentMenu.open(player, shop);
+    }
+
     public boolean openShop(@NotNull Player player, @NotNull ChestShop shop) {
         return this.openShop(player, shop, false);
     }
@@ -423,14 +472,20 @@ public class ChestShopModule extends AbstractShopModule implements TransactionMo
     }
 
     public boolean openShop(@NotNull Player player, @NotNull ChestShop shop, int page, boolean force) {
+        if (!this.plugin.getDataManager().isLoaded()) return false;
+
         if (!force) {
             if (!shop.canAccess(player, true)) return false;
         }
 
-        MenuViewer viewer = this.shopView.getViewerOrCreate(player);
-        viewer.setPage(Math.abs(page));
+        return this.shopView.open(player, shop, viewer -> viewer.setPage(Math.abs(page)));
+    }
 
-        return this.shopView.open(player, shop);
+    public void remakeDisplay(@NotNull ChestShop shop) {
+        if (this.displayHandler == null) return;
+
+        this.displayHandler.remove(shop);
+        this.displayHandler.refresh(shop);
     }
 
     public void browseShops(@NotNull Player player) {
@@ -450,19 +505,19 @@ public class ChestShopModule extends AbstractShopModule implements TransactionMo
 
         List<ChestProduct> products = new ArrayList<>();
         this.getActiveShops().forEach(shop -> {
-            shop.getProducts().forEach(product -> {
-                if (!(product.getPacker() instanceof ItemPacker packer)) return;
+            shop.getValidProducts().forEach(product -> {
+                if (!(product.getType() instanceof PhysicalTyping typing)) return;
 
-                ItemStack item = packer.getItem();
+                ItemStack item = typing.getItem();
                 String material = BukkitThing.toString(item.getType()).toLowerCase();
                 String localized = LangAssets.get(item.getType()).toLowerCase();
-                String displayName = ItemUtil.getItemName(item);
+                String displayName = NightMessage.stripTags(ItemUtil.getSerializedName(item)).toLowerCase();
                 if (material.contains(searchFor) || localized.contains(searchFor) || displayName.contains(searchFor)) {
                     products.add(product);
                     return;
                 }
 
-                if (packer instanceof PluginItemPacker pluginPacker) {
+                if (typing instanceof PluginTyping pluginPacker && pluginPacker.isValid()) {
                     String itemId = pluginPacker.getItemId();
                     if (itemId.contains(searchFor)) {
                         products.add(product);
@@ -475,13 +530,17 @@ public class ChestShopModule extends AbstractShopModule implements TransactionMo
         this.searchMenu.open(player, products);
     }
 
-    public void renameShop(@NotNull Player player, @NotNull ChestShop shop, @NotNull String name) {
+    public boolean renameShop(@NotNull Player player, @NotNull ChestShop shop, @NotNull String name) {
+        String rawName = NightMessage.stripTags(name, TagPool.ALL_COLORS_AND_STYLES);
         int maxLength = ChestConfig.SHOP_MAX_NAME_LENGTH.get();
-        if (name.length() > maxLength) {
-            name = name.substring(0, maxLength);
+
+        if (rawName.length() > maxLength) {
+            ChestLang.SHOP_RENAME_ERROR_LONG_NAME.getMessage().send(player, replacer -> replacer.replace(Placeholders.GENERIC_AMOUNT, maxLength));
+            return false;
         }
 
         shop.setName(name);
+        return true;
     }
 
     public void interactShop(@NotNull PlayerInteractEvent event, @NotNull Player player, @NotNull Block block) {
@@ -497,6 +556,11 @@ public class ChestShopModule extends AbstractShopModule implements TransactionMo
                 shop = this.getShop(backend);
 
                 if (shop != null) {
+                    ItemStack item = event.getItem();
+                    if (item != null && (item.getType() == Material.GLOW_INK_SAC || ChestUtils.isDye(item.getType()))) {
+                        if (shop.isOwner(player) || player.hasPermission(ChestPerms.EDIT_OTHERS)) return;
+                    }
+
                     event.setUseInteractedBlock(Event.Result.DENY);
                     event.setUseItemInHand(Event.Result.DENY);
                     this.interactShop(event, player, shop);
@@ -509,13 +573,18 @@ public class ChestShopModule extends AbstractShopModule implements TransactionMo
         boolean originalDeny = event.useInteractedBlock() == Event.Result.DENY;
         event.setUseInteractedBlock(Event.Result.DENY);
 
-        if (event.getAction() != Action.RIGHT_CLICK_BLOCK) return;
+        if (event.getAction() != Action.RIGHT_CLICK_BLOCK) {
+            if (!originalDeny) {
+                event.setUseInteractedBlock(Event.Result.ALLOW);
+            }
+            return;
+        }
 
         if (player.isSneaking()) {
             ItemStack item = event.getItem();
             if (item != null && !originalDeny) {
                 if (Tag.SIGNS.isTagged(item.getType()) || item.getType() == Material.ITEM_FRAME || item.getType() == Material.GLOW_ITEM_FRAME || item.getType() == Material.HOPPER) {
-                    if (!shop.isOwner(player)) {
+                    if (!shop.isOwnerOrRenter(player) && !player.hasPermission(ChestPerms.EDIT_OTHERS)) {
                         ChestLang.SHOP_ERROR_NOT_OWNER.getMessage().send(player);
                     }
                     else event.setUseInteractedBlock(Event.Result.ALLOW);
@@ -523,7 +592,7 @@ public class ChestShopModule extends AbstractShopModule implements TransactionMo
                 }
             }
 
-            if (shop.isOwner(player) || player.hasPermission(ChestPerms.EDIT_OTHERS)) {
+            if (shop.isOwnerOrRenter(player) || player.hasPermission(ChestPerms.EDIT_OTHERS)) {
                 this.openShopSettings(player, shop);
             }
             else {
@@ -532,10 +601,21 @@ public class ChestShopModule extends AbstractShopModule implements TransactionMo
             return;
         }
 
-        if (shop.isOwner(player) && ChestUtils.isInfiniteStorage()) {
+        if (shop.isOwnerOrRenter(player) && ChestUtils.isInfiniteStorage()) {
             this.openShopSettings(player, shop);
         }
-        else if (shop.isAdminShop() || !shop.isOwner(player)) {
+        else if (shop.isAdminShop() || !shop.isOwnerOrRenter(player)) {
+            if (shop.isRentable() && !shop.isRented()) {
+                this.plugin.getShopManager().openConfirmation(player, Confirmation.create(
+                    (viewer, event1) -> {
+                        this.rentShop(player, shop);
+                        player.closeInventory();
+                    },
+                    (viewer, event1) -> player.closeInventory()
+                ));
+                return;
+            }
+
             if (shop.canAccess(player, true)) {
                 shop.open(player);
             }
@@ -545,7 +625,7 @@ public class ChestShopModule extends AbstractShopModule implements TransactionMo
         }
     }
 
-    public boolean checkShopCreation(@NotNull Player player, @NotNull Block block, @NotNull ShopType shopType) {
+    public boolean checkShopCreation(@NotNull Player player, @NotNull Block block) {
         if (this.isShop(block)) {
             ChestLang.SHOP_CREATION_ERROR_ALREADY_SHOP.getMessage().send(player);
             return false;
@@ -558,11 +638,6 @@ public class ChestShopModule extends AbstractShopModule implements TransactionMo
 
         if (!this.checkCreationClaim(player, block)) {
             ChestLang.SHOP_CREATION_ERROR_BAD_AREA.getMessage().send(player);
-            return false;
-        }
-
-        if (!shopType.hasPermission(player)) {
-            ChestLang.SHOP_CREATION_ERROR_TYPE_PERMISSION.getMessage().send(player);
             return false;
         }
 
@@ -590,9 +665,9 @@ public class ChestShopModule extends AbstractShopModule implements TransactionMo
             return false;
         }
 
-        if (!this.checkShopCreation(player, block, ShopType.PLAYER)) return false;
+        if (!this.checkShopCreation(player, block)) return false;
 
-        ChestShopCreateEvent event = new ChestShopCreateEvent(player, block, ShopType.PLAYER, itemStack);
+        ChestShopCreateEvent event = new ChestShopCreateEvent(player, block, itemStack);
         plugin.getPluginManager().callEvent(event);
         if (event.isCancelled()) return false;
 
@@ -606,7 +681,7 @@ public class ChestShopModule extends AbstractShopModule implements TransactionMo
 
         block.getWorld().setBlockData(block.getLocation(), blockData);
 
-        this.createShop(player, block, ShopType.PLAYER, shop -> {
+        this.createShop(player, block, shop -> {
             shop.setItemCreated(true);
         });
 
@@ -615,17 +690,17 @@ public class ChestShopModule extends AbstractShopModule implements TransactionMo
         return true;
     }
 
-    public boolean createShopNaturally(@NotNull Player player, @NotNull Block block, @NotNull ShopType shopType) {
-        return this.createShopNaturally(player, block, shopType, -1, -1);
+    public boolean createShopNaturally(@NotNull Player player, @NotNull Block block) {
+        return this.createShopNaturally(player, block, -1, -1);
     }
 
-    public boolean createShopNaturally(@NotNull Player player, @NotNull Block block, @NotNull ShopType shopType, double buyPrice, double sellPrice) {
+    public boolean createShopNaturally(@NotNull Player player, @NotNull Block block, double buyPrice, double sellPrice) {
         if (!ChestUtils.isValidContainer(block)) {
             ChestLang.SHOP_CREATION_ERROR_NOT_A_CHEST.getMessage().send(player);
             return false;
         }
 
-        if (!this.checkShopCreation(player, block, shopType)) return false;
+        if (!this.checkShopCreation(player, block)) return false;
 
         Container container = (Container) block.getState();
         Inventory inventory = container.getInventory();
@@ -634,16 +709,16 @@ public class ChestShopModule extends AbstractShopModule implements TransactionMo
             return false;
         }
 
-        ChestShopCreateEvent event = new ChestShopCreateEvent(player, block, shopType);
+        ChestShopCreateEvent event = new ChestShopCreateEvent(player, block);
         plugin.getPluginManager().callEvent(event);
         if (event.isCancelled()) return false;
 
         this.payForCreate(player);
 
-        this.createShop(player, block, shopType, shop -> {
+        this.createShop(player, block, shop -> {
             ItemStack hand = new ItemStack(player.getInventory().getItemInMainHand());
             if (!ChestUtils.isShopItem(hand)) {
-                ChestProduct product = shop.createProduct(player, hand);
+                ChestProduct product = shop.createProduct(player, hand, false);
                 if (product != null) {
                     if (buyPrice > 0) product.setPrice(TradeType.BUY, buyPrice);
                     if (sellPrice > 0) product.setPrice(TradeType.SELL, sellPrice);
@@ -655,30 +730,134 @@ public class ChestShopModule extends AbstractShopModule implements TransactionMo
     }
 
     @NotNull
-    public ChestShop createShop(@NotNull Player player, @NotNull Block block, @NotNull ShopType shopType, @NotNull Consumer<ChestShop> consumer) {
+    public ChestShop createShop(@NotNull Player player, @NotNull Block block, @NotNull Consumer<ChestShop> consumer) {
         String id = ChestUtils.generateShopId(player, block.getLocation());
         File file = new File(this.getAbsolutePath() + DIR_SHOPS, id + ".yml");
         ChestShop shop = new ChestShop(this.plugin, this, file, id);
 
         shop.assignLocation(block.getWorld(), block.getLocation());
-        shop.setType(shopType);
+        shop.setAdminShop(player.hasPermission(ChestPerms.ADMIN_SHOP));
         shop.setOwner(player);
         shop.setName(Placeholders.forPlayer(player).apply(ChestConfig.DEFAULT_NAME.get()));
         shop.setHologramEnabled(true);
         shop.setShowcaseEnabled(true);
         shop.setShowcaseType(null);
-        Arrays.asList(TradeType.values()).forEach(tradeType -> shop.setTransactionEnabled(tradeType, true));
+        shop.setBuyingAllowed(true);
+        shop.setSellingAllowed(true);
+        if (ChestConfig.isRentEnabled()) {
+            shop.setRentSettings(new RentSettings(false, 7, CurrencyId.VAULT, 1000));
+        }
 
         consumer.accept(shop);
         shop.save();
 
         this.shopMap.put(shop);
         if (this.displayHandler != null) {
-            this.displayHandler.update(shop);
+            this.displayHandler.refresh(shop);
         }
 
         ChestLang.SHOP_CREATION_INFO_DONE.getMessage().send(player);
         return shop;
+    }
+
+    public boolean rentShop(@NotNull Player player, @NotNull ChestShop shop) {
+        if (!ChestConfig.isRentEnabled()) return false;
+
+        if (!shop.isActive()) {
+            ChestLang.ERROR_SHOP_INACTIVE.getMessage().send(player, replacer -> replacer.replace(shop.replacePlaceholders()));
+            return false;
+        }
+
+        if (shop.isRented()) {
+            ChestLang.RENT_ERROR_ALREADY_RENTED.getMessage().send(player, replacer -> replacer.replace(shop.replacePlaceholders()));
+            return false;
+        }
+
+        RentSettings settings = shop.getRentSettings();
+
+        if (!shop.isRentable() || !settings.isValid()) {
+            ChestLang.RENT_ERROR_NOT_RENTABLE.getMessage().send(player, replacer -> replacer.replace(shop.replacePlaceholders()));
+            return false;
+        }
+
+        String currencyId = settings.getCurrencyId();
+        double price = settings.getPrice();
+        if (!EconomyBridge.hasEnough(player, currencyId, price)) {
+            ChestLang.RENT_ERROR_INSUFFICIENT_FUNDS.getMessage().send(player, replacer -> replacer
+                .replace(Placeholders.GENERIC_PRICE, settings.getPriceFormatted())
+                .replace(shop.replacePlaceholders())
+            );
+            return false;
+        }
+
+        EconomyBridge.withdraw(player, currencyId, price);
+        EconomyBridge.deposit(shop.getOwnerId(), currencyId, price); // TODO Notify?
+        shop.setRentedBy(player);
+        shop.setRentedUntil(TimeUtil.createFutureTimestamp(TimeUnit.DAYS.toSeconds(shop.getRentSettings().getDuration())));
+        shop.saveSettings();
+
+        ChestLang.RENT_RENT_SUCCESS.getMessage().send(player, replacer -> replacer
+            .replace(Placeholders.GENERIC_TIME, TimeFormats.toLiteral(settings.getDurationMillis()))
+            .replace(Placeholders.GENERIC_PRICE, settings.getPriceFormatted())
+            .replace(shop.replacePlaceholders())
+        );
+        return true;
+    }
+
+    public boolean extendRentShop(@NotNull Player player, @NotNull ChestShop shop) {
+        if (!ChestConfig.isRentEnabled()) return false;
+
+        if (!shop.isActive()) {
+            ChestLang.ERROR_SHOP_INACTIVE.getMessage().send(player, replacer -> replacer.replace(shop.replacePlaceholders()));
+            return false;
+        }
+
+        if (!shop.isRenter(player)) {
+            ChestLang.RENT_ERROR_NOT_RENTED.getMessage().send(player, replacer -> replacer.replace(shop.replacePlaceholders()));
+            return false;
+        }
+
+        RentSettings settings = shop.getRentSettings();
+        if (!settings.isValid()) {
+            ChestLang.RENT_ERROR_NOT_RENTABLE.getMessage().send(player, replacer -> replacer.replace(shop.replacePlaceholders()));
+            return false;
+        }
+
+        String currencyId = settings.getCurrencyId();
+        double price = settings.getPrice();
+        if (!EconomyBridge.hasEnough(player, currencyId, price)) {
+            ChestLang.RENT_ERROR_INSUFFICIENT_FUNDS.getMessage().send(player, replacer -> replacer
+                .replace(Placeholders.GENERIC_PRICE, settings.getPriceFormatted())
+                .replace(shop.replacePlaceholders())
+            );
+            return false;
+        }
+
+        EconomyBridge.withdraw(player, currencyId, price);
+        EconomyBridge.deposit(shop.getOwnerId(), currencyId, price); // TODO Notify?
+        shop.extendRent();
+        shop.saveSettings();
+
+        ChestLang.RENT_EXTEND_SUCCESS.getMessage().send(player, replacer -> replacer
+            .replace(Placeholders.GENERIC_TIME, TimeFormats.toLiteral(settings.getDurationMillis()))
+            .replace(Placeholders.GENERIC_PRICE, settings.getPriceFormatted())
+            .replace(shop.replacePlaceholders())
+        );
+        return true;
+    }
+
+    public boolean canBreak(@NotNull Player player, @NotNull ChestShop shop) {
+        if (!player.hasPermission(ChestPerms.REMOVE)) {
+            ChestLang.ERROR_NO_PERMISSION.getMessage(this.plugin).send(player);
+            return false;
+        }
+
+        if (!shop.isOwner(player) && !player.hasPermission(ChestPerms.REMOVE_OTHERS)) {
+            ChestLang.SHOP_ERROR_NOT_OWNER.getMessage().send(player);
+            return false;
+        }
+
+        return true;
     }
 
     public boolean deleteShop(@NotNull Player player, @NotNull Block block) {
@@ -692,23 +871,24 @@ public class ChestShopModule extends AbstractShopModule implements TransactionMo
     }
 
     public boolean deleteShop(@NotNull Player player, @NotNull ChestShop shop) {
-        if (!player.hasPermission(ChestPerms.REMOVE)) {
-            ChestLang.ERROR_NO_PERMISSION.getMessage().send(player);
-            return false;
-        }
-
-        if (!shop.isOwner(player) && !player.hasPermission(ChestPerms.REMOVE_OTHERS)) {
-            ChestLang.SHOP_ERROR_NOT_OWNER.getMessage().send(player);
-            return false;
-        }
-
+        if (!this.canBreak(player, shop)) return false;
+//        if (!player.hasPermission(ChestPerms.REMOVE)) {
+//            ChestLang.ERROR_NO_PERMISSION.getMessage(this.plugin).send(player);
+//            return false;
+//        }
+//
+//        if (!shop.isOwner(player) && !player.hasPermission(ChestPerms.REMOVE_OTHERS)) {
+//            ChestLang.SHOP_ERROR_NOT_OWNER.getMessage().send(player);
+//            return false;
+//        }
+//
         if (!this.payForRemoval(player)) {
             ChestLang.SHOP_CREATION_ERROR_NOT_ENOUGH_FUNDS.getMessage().send(player);
             return false;
         }
 
         if (ChestUtils.isInfiniteStorage()) {
-            if (shop.getProducts().stream().anyMatch(product -> shop.getStock().count(product, TradeType.BUY) > 0)) {
+            if (shop.getValidProducts().stream().anyMatch(product -> product.countStock(TradeType.BUY, null) > 0)) {
                 ChestLang.SHOP_REMOVAL_ERROR_NOT_EMPTY.getMessage().send(player);
                 return false;
             }
@@ -730,8 +910,8 @@ public class ChestShopModule extends AbstractShopModule implements TransactionMo
 
         this.removeShop(shop);
 
-        if (this.getShopsAmount(player) <= 0) {
-            for (Currency currency : this.getAllowedCurrencies()) {
+        if (this.getShopsAmount(player) <= 0 && !ChestConfig.isAutoBankEnabled()) {
+            for (Currency currency : this.getAllowedCurrencies(player)) {
                 this.withdrawFromBank(player, currency, -1);
             }
         }
@@ -744,28 +924,34 @@ public class ChestShopModule extends AbstractShopModule implements TransactionMo
         return this.depositToBank(player, player.getUniqueId(), currency, amount);
     }
 
-    public boolean depositToBank(@NotNull Player player, @NotNull UUID target, @NotNull Currency currency, double amount) {
-        if (!this.isAllowedCurrency(currency)) {
+    public boolean depositToBank(@NotNull Player player, @NotNull UUID target, @NotNull Currency currency, double value) {
+        if (!this.isAllowedCurrency(currency, player)) {
             ChestLang.BANK_ERROR_INVALID_CURRENCY.getMessage().send(player);
             return false;
         }
 
-        if (amount < 0D) amount = currency.getHandler().getBalance(player);
+        double balance = currency.getBalance(player);
+        double amount = value < 0 ? balance : value;
 
-        if (currency.getHandler().getBalance(player) < amount) {
+        if (balance < amount) {
             ChestLang.BANK_DEPOSIT_ERROR_NOT_ENOUGH.getMessage().send(player);
             return false;
         }
 
-        currency.getHandler().take(player, amount);
+        currency.take(player, amount);
+
+        // If funds not transfered
+        if (currency.getBalance(player) == balance) {
+            return false;
+        }
 
         ChestBank bank = this.getPlayerBank(target);
         bank.deposit(currency, amount);
         this.savePlayerBank(bank);
 
-        ChestLang.BANK_DEPOSIT_SUCCESS.getMessage()
+        ChestLang.BANK_DEPOSIT_SUCCESS.getMessage().send(player, replacer -> replacer
             .replace(Placeholders.GENERIC_AMOUNT, currency.format(amount))
-            .send(player);
+        );
         return true;
     }
 
@@ -773,33 +959,32 @@ public class ChestShopModule extends AbstractShopModule implements TransactionMo
         return this.withdrawFromBank(player, player.getUniqueId(), currency, amount);
     }
 
-    public boolean withdrawFromBank(@NotNull Player player, @NotNull UUID target, @NotNull Currency currency, double amount) {
-        if (!this.isAllowedCurrency(currency)) {
+    public boolean withdrawFromBank(@NotNull Player player, @NotNull UUID target, @NotNull Currency currency, double value) {
+        if (!this.isAllowedCurrency(currency, player)) {
             ChestLang.BANK_ERROR_INVALID_CURRENCY.getMessage().send(player);
             return false;
         }
 
         ChestBank bank = this.getPlayerBank(target);
-        if (amount < 0D) amount = bank.getBalance(currency);
+        double amount = value < 0D ? bank.getBalance(currency) : value;
 
         if (!bank.hasEnough(currency, amount)) {
             ChestLang.BANK_WITHDRAW_ERROR_NOT_ENOUGH.getMessage().send(player);
             return false;
         }
 
-        currency.getHandler().give(player, amount);
+        currency.give(player, amount);
         bank.withdraw(currency, amount);
         this.savePlayerBank(bank);
 
-        ChestLang.BANK_WITHDRAW_SUCCESS.getMessage()
+        ChestLang.BANK_WITHDRAW_SUCCESS.getMessage().send(player, replacer -> replacer
             .replace(Placeholders.GENERIC_AMOUNT, currency.format(amount))
-            .send(player);
+        );
         return true;
     }
 
     public boolean depositToStorage(@NotNull Player player, @NotNull ChestProduct product, int units) {
         ChestShop shop = product.getShop();
-        ChestStock stock = shop.getStock();
 
         int playerUnits = product.countUnits(player);
         if (playerUnits < units) {
@@ -807,22 +992,21 @@ public class ChestShopModule extends AbstractShopModule implements TransactionMo
             return false;
         }
 
-        stock.storeItem(product, units, TradeType.BUY, player);
+        product.storeStock(TradeType.BUY, units, null);
         product.take(player, units);
         shop.save();
 
-        ChestLang.STORAGE_DEPOSIT_SUCCESS.getMessage()
+        ChestLang.STORAGE_DEPOSIT_SUCCESS.getMessage().send(player, replacer -> replacer
             .replace(Placeholders.GENERIC_AMOUNT, NumberUtil.format(units))
-            .replace(Placeholders.GENERIC_ITEM, ItemUtil.getItemName(product.getPreview()))
-            .send(player);
+            .replace(Placeholders.GENERIC_ITEM, ItemUtil.getSerializedName(product.getPreview()))
+        );
         return true;
     }
 
     public boolean withdrawFromStorage(@NotNull Player player, @NotNull ChestProduct product, int units) {
         ChestShop shop = product.getShop();
-        ChestStock stock = shop.getStock();
 
-        int shopUnits = stock.countItem(product, TradeType.BUY, player);
+        int shopUnits = product.countStock(TradeType.BUY, null);
         if (shopUnits < units) {
             ChestLang.STORAGE_WITHDRAW_ERROR_NOT_ENOUGH.getMessage().send(player);
             return false;
@@ -832,19 +1016,25 @@ public class ChestShopModule extends AbstractShopModule implements TransactionMo
         int maxUnits = Math.min(spaceUnits, units);
 
         product.delivery(player, maxUnits);
-        stock.consumeItem(product, maxUnits, TradeType.BUY, player);
+        product.consumeStock(TradeType.BUY, maxUnits, null);
         shop.save();
 
-        ChestLang.STORAGE_WITHDRAW_SUCCESS.getMessage()
-            .replace(Placeholders.GENERIC_AMOUNT, NumberUtil.format(units))
-            .replace(Placeholders.GENERIC_ITEM, ItemUtil.getItemName(product.getPreview()))
-            .send(player);
+        ChestLang.STORAGE_WITHDRAW_SUCCESS.getMessage().send(player, replacer -> replacer
+            .replace(Placeholders.GENERIC_AMOUNT, NumberUtil.format(maxUnits))
+            .replace(Placeholders.GENERIC_ITEM, ItemUtil.getSerializedName(product.getPreview()))
+        );
         return true;
     }
 
     @Nullable
-    public DisplayHandler getDisplayHandler() {
+    public DisplayHandler<?> getDisplayHandler() {
         return this.displayHandler;
+    }
+
+    public void manageDisplay(@NotNull Consumer<DisplayHandler<?>> consumer) {
+        if (this.displayHandler != null) {
+            consumer.accept(this.displayHandler);
+        }
     }
 
     @NotNull
@@ -953,7 +1143,7 @@ public class ChestShopModule extends AbstractShopModule implements TransactionMo
     private boolean canPayForShop(@NotNull Player player, double price) {
         if (price <= 0) return true;
 
-        return this.getDefaultCurrency().getHandler().getBalance(player) >= price;
+        return this.getDefaultCurrency().getBalance(player) >= price;
     }
 
     private boolean payForShop(@NotNull Player player, double price) {
@@ -961,10 +1151,10 @@ public class ChestShopModule extends AbstractShopModule implements TransactionMo
 
         Currency currency = this.getDefaultCurrency();
 
-        double balance = currency.getHandler().getBalance(player);
+        double balance = currency.getBalance(player);
         if (balance < price) return false;
 
-        currency.getHandler().take(player, price);
+        currency.take(player, price);
         return true;
     }
 }
